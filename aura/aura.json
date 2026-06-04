@@ -1,0 +1,992 @@
+{
+  "name": "App Reviews - Fetch & Analyze - DND4",
+  "nodes": [
+    {
+      "parameters": {
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "You are an expert customer service analyst specializing in app store reviews. Your task is to analyze reviews and provide structured insights.\n\nYou MUST respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.\n\nRequired JSON structure:\n{\n  \"original_review\": \"{{ $json.body }}\",\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"category\": \"bug\" | \"feature_request\" | \"complaint\" | \"praise\" | \"general_feedback\" |   \"performance\" | \"ui_ux\" | \"pricing\",\n  \"key_issues\": [\"specific issue 1\", \"specific issue 2\"],\n  \"urgency\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"summary\": \"one clear sentence summarizing the core feedback\",\n  \"response_tone\": \"apologetic\" | \"grateful\" | \"helpful\" | \"empathetic\" | \"professional\",\n  \"action_required\": true | false,\n  \"customer_emotion\": \"frustrated\" | \"angry\" | \"satisfied\" | \"disappointed\" | \"happy\" | \"neutral\"\n}\n\nGuidelines:\n- sentiment: Overall tone of the review\n- category: Primary topic of feedback\n- key_issues: Extract 1-3 specific problems or points mentioned\n- urgency: Based on severity and customer emotion\n- summary: Concise, factual summary\n- response_tone: Best tone for responding\n- action_required: Does this need immediate follow-up?\n- customer_emotion: Detected emotional state",
+              "role": "system"
+            },
+            {
+              "content": "=Analyze this App Store review:\n\n**Title:** {{ $json.title }} $\n**Rating:** {{ $json.rating }}/5 stars\n**Review Text:** {{ $json.body }}\n**Territory:** {{ $json.territory }}\n\nProvide your analysis as a JSON object only.\n\n\nRequired JSON structure:\n{\n  \"original_review\": \"{{ $json.body }}\",\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"category\": \"bug\" | \"feature_request\" | \"complaint\" | \"praise\" | \"general_feedback\" |   \"performance\" | \"ui_ux\" | \"pricing\",\n  \"key_issues\": [\"specific issue 1\", \"specific issue 2\"],\n  \"urgency\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"summary\": \"one clear sentence summarizing the core feedback\",\n  \"response_tone\": \"apologetic\" | \"grateful\" | \"helpful\" | \"empathetic\" | \"professional\",\n  \"action_required\": true | false,\n  \"customer_emotion\": \"frustrated\" | \"angry\" | \"satisfied\" | \"disappointed\" | \"happy\" | \"neutral\"\n}\n"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "name": "Analyze Sentiment - OpenAI1",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [
+        608,
+        464
+      ],
+      "id": "70fc7a39-5ce5-4614-9a4f-fe2b8d16da58",
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract just the data array from the wrapper\nconst input = $input.first().json;\n\n// Handle if input is array or object\nconst dataArray = Array.isArray(input) ? input[0].data : input.data;\n\n// Return each review as a separate item\nreturn dataArray.map(review => ({\n  json: {\n    reviewId: review.id,\n    type: review.type,\n    rating: review.attributes.rating,\n    title: review.attributes.title,\n    body: review.attributes.body,\n    reviewerNickname: review.attributes.reviewerNickname,\n    createdDate: review.attributes.createdDate,\n    territory: review.attributes.territory,\n    hasResponse: review.relationships?.response?.data !== null,\n    rawData: review\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        544
+      ],
+      "id": "902fede8-5df6-44eb-9941-7dc76b6e7b90",
+      "name": "Parse Sentiment3"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        384,
+        544
+      ],
+      "id": "548526d1-3f26-4c07-acc2-4ad2e51094dc",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Load credentials from n8n environment variables\nconst issuerID = $env.APPLE_ISSUER_ID;\nconst keyID = $env.APPLE_KEY_ID;\nconst privateKey = $env.APPLE_PRIVATE_KEY;\n\n// Validate that all required environment variables are set\nif (!issuerID || !keyID || !privateKey) {\n  throw new Error('Missing required environment variables: APPLE_ISSUER_ID, APPLE_KEY_ID, or APPLE_PRIVATE_KEY');\n}\n\nconst token = jwt.sign(\n  {\n    iss: issuerID,\n    exp: Math.floor(Date.now() / 1000) + (20 * 60),\n    aud: 'appstoreconnect-v1'\n  },\n  privateKey,\n  {\n    algorithm: 'ES256',\n    header: {\n      alg: 'ES256',\n      kid: keyID,\n      typ: 'JWT'\n    }\n  }\n);\n\nreturn [{ json: { token } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        544
+      ],
+      "id": "883e8bef-0a83-4844-a8f6-d66a1a4d8765",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compile final response with all data\nconst aiResponse = $input.first().json;\nconst sentimentData = $('Parse Sentiment1').first().json;\nconst reviewData = $('Loop Over Items').context.noItemsLeft ? $('Loop Over Items').first().json : $input.first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  content = content.trim();\n  \n  // Return complete data structure\n  return [{\n    json: {\n      // Review Information\n      review_id: sentimentData.review_id,\n      review_title: sentimentData.review_title,\n      review_body: sentimentData.review_body,\n      review_rating: sentimentData.review_rating,\n      review_date: sentimentData.review_date,\n      reviewer_nickname: sentimentData.reviewer_nickname,\n      territory: sentimentData.territory,\n      \n      // Sentiment Analysis\n      sentiment: sentimentData.sentiment,\n      category: sentimentData.category,\n      key_issues: sentimentData.key_issues,\n      urgency: sentimentData.urgency,\n      summary: sentimentData.summary,\n      response_tone: sentimentData.response_tone,\n      action_required: sentimentData.action_required,\n      customer_emotion: sentimentData.customer_emotion,\n      \n      // Generated Response\n      suggested_response: content,\n      response_generated_at: new Date().toISOString(),\n      \n      // Platform\n      platform: 'apple_app_store'\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse response generation',\n      details: error.message,\n      raw_response: aiResponse\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        544
+      ],
+      "id": "757dc1ff-8c93-468d-87d4-8446ca4d2411",
+      "name": "Parse Response1"
+    },
+    {
+      "parameters": {
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "You are a senior customer service representative crafting personalized responses to app store reviews.\n\n**Response Framework:**\n\n1. **Greeting & Gratitude** (1 sentence)\n   - Thank them by name if available\n   - Acknowledge their time in writing the review\n\n2. **Empathy & Validation** (1-2 sentences)\n   - Show you understand their specific concern\n   - Validate their feelings or experience\n   - Reference specific details from their review\n\n3. **Solution or Action** (2-3 sentences)\n   - For bugs: Acknowledge issue, mention if it's being fixed\n   - For feature requests: Show interest, explain if planned\n   - For praise: Express appreciation, mention team recognition\n   - For complaints: Offer concrete next steps or solutions\n\n4. **Call to Action** (1 sentence)\n   - Provide contact info for urgent issues\n   - Invite them to try new version\n   - Encourage continued feedback\n\n5. **Professional Close** (1 sentence)\n   - Sign off warmly\n   - Reinforce you value their business\n\n**Tone Guidelines:**\n- Match the response_tone from analysis\n- Be genuine, not robotic or template-like\n- Use conversational but professional language\n- Avoid corporate jargon\n- Keep under 200 words\n- NO markdown formatting or asterisks\n- Write in plain text only\n\n**Critical:** This is a DRAFT for human review before posting. Be helpful and authentic.",
+              "role": "system"
+            },
+            {
+              "content": "=**Customer Review Context:**\n\nReviewer: {{ $node['Parse Sentiment1'].json.reviewer_nickname }}\nRating: {{ $node['Parse Sentiment1'].json.review_rating }}/5 stars\nTitle: {{ $node['Parse Sentiment1'].json.review_title }}\nReview: {{ $node['Parse Sentiment1'].json.review_body }}\nTerritory: {{ $node['Parse Sentiment1'].json.territory }}\n\n**Analysis:**\nSentiment: {{ $node['Parse Sentiment1'].json.sentiment }}\nCategory: {{ $node['Parse Sentiment1'].json.category }}\nKey Issues: {{ $node['Parse Sentiment1'].json.key_issues }}\nUrgency Level: {{ $node['Parse Sentiment1'].json.urgency }}\nCustomer Emotion: {{ $node['Parse Sentiment1'].json.customer_emotion }}\nRecommended Tone: {{ $node['Parse Sentiment1'].json.response_tone }}\nAction Required: {{ $node['Parse Sentiment1'].json.action_required }}\n\nGenerate a personalized response draft following the framework. Address their specific concerns directly."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "name": "Generate Response - OpenAI1",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [
+        1184,
+        464
+      ],
+      "id": "4d48f3f2-8f9e-441e-b346-f6ddd3656a0c",
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI sentiment analysis response\nconst aiResponse = $input.first().json;\nconst loopData = $('Loop Over Items').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  // Remove markdown formatting if present\n  content = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const analysis = JSON.parse(content);\n  \n  // Return complete data structure with review info and analysis\n  return [{\n    json: {\n      review_id: loopData.reviewId,\n      review_title: loopData.title,\n      review_body: loopData.body,\n      review_rating: loopData.rating,\n      review_date: loopData.createdDate,\n      reviewer_nickname: loopData.reviewerNickname,\n      territory: loopData.territory,\n      sentiment: analysis.sentiment,\n      category: analysis.category,\n      key_issues: analysis.key_issues,\n      urgency: analysis.urgency,\n      summary: analysis.summary,\n      response_tone: analysis.response_tone,\n      action_required: analysis.action_required,\n      customer_emotion: analysis.customer_emotion\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse sentiment analysis',\n      details: error.message,\n      raw_response: aiResponse,\n      loop_data: loopData\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        464
+      ],
+      "id": "478fc0cf-cb9b-47ea-8b98-c5b1b2c937ec",
+      "name": "Parse Sentiment1"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.appstoreconnect.apple.com/v1/apps/' + $env.APPLE_APP_ID + '/customerReviews' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "5"
+            },
+            {
+              "name": "sort",
+              "value": "-createdDate"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "name": "Fetch Apple Reviews1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -64,
+        544
+      ],
+      "id": "72b21721-73bd-4050-adb4-e7943956eb09",
+      "notes": "Fetches latest 5 reviews from App Store Connect API"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Schedule - Every 6 Hours1",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        544
+      ],
+      "id": "be171b08-0441-4c05-894a-c364b3bc6643"
+    },
+    {
+      "parameters": {
+        "content": "## Apple App Store Review Processing\n\nThis workflow:\n1. Runs every 6 hours\n2. Generates JWT token for Apple API\n3. Fetches latest 5 reviews\n4. Splits review data array\n5. Analyzes sentiment with AI\n6. Parses sentiment JSON\n7. Generates suggested responses\n8. Parses response output\n\n**Data Flow:**\n- Split Out: Separates review array into individual items\n- Parse Sentiment: Extracts JSON from AI response and combines with review data\n- Parse Response: Extracts final response and creates complete output\n\n**Setup Required:**\n- Credentials: OpenAI API\n- JWT credentials in Code node",
+        "height": 400,
+        "width": 300
+      },
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4936216b-7ccd-4291-9cd7-2de7fc1e1372"
+    },
+    {
+      "parameters": {
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "You are an expert customer service analyst specializing in Google Play Store reviews. Your task is to analyze reviews and provide structured insights.\n\nYou MUST respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.\n\nRequired JSON structure:\n{\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"category\": \"bug\" | \"feature_request\" | \"complaint\" | \"praise\" | \"general_feedback\" | \"performance\" | \"ui_ux\" | \"pricing\" | \"compatibility\",\n  \"key_issues\": [\"specific issue 1\", \"specific issue 2\"],\n  \"urgency\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"summary\": \"one clear sentence summarizing the core feedback\",\n  \"response_tone\": \"apologetic\" | \"grateful\" | \"helpful\" | \"empathetic\" | \"professional\",\n  \"action_required\": true | false,\n  \"customer_emotion\": \"frustrated\" | \"angry\" | \"satisfied\" | \"disappointed\" | \"happy\" | \"neutral\",\n  \"device_context\": \"brief note on device/OS relevance to the issue\"\n}\n\nGuidelines:\n- sentiment: Overall tone of the review\n- category: Primary topic of feedback (use compatibility for device-specific issues)\n- key_issues: Extract 1-3 specific problems or points mentioned\n- urgency: Based on severity, customer emotion, and potential impact\n- summary: Concise, factual summary\n- response_tone: Best tone for responding\n- action_required: Does this need immediate follow-up?\n- customer_emotion: Detected emotional state\n- device_context: Note if device/Android version may be relevant",
+              "role": "system"
+            },
+            {
+              "content": "=Analyze this Google Play Store review:\n\n**Rating:** {{ $json.rating }}/5 stars\n**Review Text:** {{ $json.text }}\n**Device:** {{ $json.device }}\n**Android Version:** {{ $json.androidOsVersion }}\n**App Version:** {{ $json.appVersionCode }}\n**Reviewer:** {{ $json.authorName }}\n\nProvide your analysis as a JSON object only."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "name": "Analyze Sentiment - OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [
+        832,
+        768
+      ],
+      "id": "72b22289-9e7a-4ff3-9a88-86585b06d23a",
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI sentiment analysis response\nconst aiResponse = $input.first().json;\nconst loopData = $('Loop Over Items1').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  // Remove markdown formatting if present\n  content = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const analysis = JSON.parse(content);\n  \n  // Return complete data structure with review info and analysis\n  return [{\n    json: {\n      review_id: loopData.reviewId,\n      author_name: loopData.authorName,\n      rating: loopData.rating,\n      review_text: loopData.text,\n      original_text: loopData.originalText,\n      device: loopData.device,\n      android_version: loopData.androidOsVersion,\n      app_version: loopData.appVersionCode,\n      last_modified: loopData.lastModified,\n      sentiment: analysis.sentiment,\n      category: analysis.category,\n      key_issues: analysis.key_issues,\n      urgency: analysis.urgency,\n      summary: analysis.summary,\n      response_tone: analysis.response_tone,\n      action_required: analysis.action_required,\n      customer_emotion: analysis.customer_emotion,\n      device_context: analysis.device_context\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse sentiment analysis',\n      details: error.message,\n      raw_response: aiResponse,\n      loop_data: loopData\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        768
+      ],
+      "id": "0496f724-63a6-404b-99b6-06d466178001",
+      "name": "Parse Sentiment"
+    },
+    {
+      "parameters": {
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "You are a senior customer service representative crafting personalized responses to Google Play Store reviews.\n\n**Response Framework:**\n\n1. **Greeting & Gratitude** (1 sentence)\n   - Thank them by name if available\n   - Acknowledge their time in writing the review\n\n2. **Empathy & Validation** (1-2 sentences)\n   - Show you understand their specific concern\n   - Validate their feelings or experience\n   - Reference specific details from their review\n   - Acknowledge device/OS context if relevant\n\n3. **Solution or Action** (2-3 sentences)\n   - For bugs: Acknowledge issue, mention if it's being fixed, reference device info if relevant\n   - For feature requests: Show interest, explain if planned\n   - For praise: Express appreciation, mention team recognition\n   - For complaints: Offer concrete next steps or solutions\n   - For compatibility issues: Mention testing on specific devices/Android versions\n\n4. **Call to Action** (1 sentence)\n   - Provide contact info for urgent issues\n   - For device-specific bugs: Ask for more details (device model, Android version, app version)\n   - Invite them to try new version\n   - Encourage continued feedback\n\n5. **Professional Close** (1 sentence)\n   - Sign off warmly\n   - Reinforce you value their business\n\n**Tone Guidelines:**\n- Match the response_tone from analysis\n- Be genuine, not robotic or template-like\n- Use conversational but professional language\n- Avoid corporate jargon\n- Keep under 200 words\n- NO markdown formatting or asterisks\n- Write in plain text only\n\n**Critical:** This is a DRAFT for human review before posting. Be helpful and authentic.",
+              "role": "system"
+            },
+            {
+              "content": "=**Customer Review Context:**\n\nReviewer: {{ $node['Parse Sentiment'].json.author_name }}\nRating: {{ $node['Parse Sentiment'].json.rating }}/5 stars\nReview: {{ $node['Parse Sentiment'].json.review_text }}\nDevice: {{ $node['Parse Sentiment'].json.device }}\nAndroid Version: {{ $node['Parse Sentiment'].json.android_version }}\nApp Version: {{ $node['Parse Sentiment'].json.app_version }}\n\n**Analysis:**\nSentiment: {{ $node['Parse Sentiment'].json.sentiment }}\nCategory: {{ $node['Parse Sentiment'].json.category }}\nKey Issues: {{ $node['Parse Sentiment'].json.key_issues }}\nUrgency Level: {{ $node['Parse Sentiment'].json.urgency }}\nCustomer Emotion: {{ $node['Parse Sentiment'].json.customer_emotion }}\nDevice Context: {{ $node['Parse Sentiment'].json.device_context }}\nRecommended Tone: {{ $node['Parse Sentiment'].json.response_tone }}\nAction Required: {{ $node['Parse Sentiment'].json.action_required }}\n\nGenerate a personalized response draft following the framework. Address their specific concerns and device context directly."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "name": "Generate Response - OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [
+        1408,
+        768
+      ],
+      "id": "9ee91f3e-454d-4898-bfd0-79bf9859cd72",
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compile final response with all data\nconst aiResponse = $input.first().json;\nconst sentimentData = $('Parse Sentiment').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  content = content.trim();\n  \n  // Return complete data structure\n  return [{\n    json: {\n      // Review Information\n      review_id: sentimentData.review_id,\n      author_name: sentimentData.author_name,\n      rating: sentimentData.rating,\n      review_text: sentimentData.review_text,\n      original_text: sentimentData.original_text,\n      device: sentimentData.device,\n      android_version: sentimentData.android_version,\n      app_version: sentimentData.app_version,\n      last_modified: sentimentData.last_modified,\n      \n      // Sentiment Analysis\n      sentiment: sentimentData.sentiment,\n      category: sentimentData.category,\n      key_issues: sentimentData.key_issues,\n      urgency: sentimentData.urgency,\n      summary: sentimentData.summary,\n      response_tone: sentimentData.response_tone,\n      action_required: sentimentData.action_required,\n      customer_emotion: sentimentData.customer_emotion,\n      device_context: sentimentData.device_context,\n      \n      // Generated Response\n      suggested_response: content,\n      response_generated_at: new Date().toISOString(),\n      \n      // Platform\n      platform: 'google_play'\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse response generation',\n      details: error.message,\n      raw_response: aiResponse\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        832
+      ],
+      "id": "9cb7d0da-b395-43ea-aca2-4aade3093161",
+      "name": "Parse Response"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        608,
+        832
+      ],
+      "id": "fb53edbe-57e7-4b00-ac27-9e75f6fba53f",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            },
+            {
+              "name": "assertion",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -64,
+        832
+      ],
+      "id": "39575dab-becf-4a3b-823d-22bea4729a6a",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.first().json.reviews || [];\n\nreturn reviews.map(review => ({\n  json: {\n    reviewId: review.reviewId,\n    authorName: review.authorName,\n    starRating: review.comments[0]?.userComment?.starRating,\n    text: review.comments[0]?.userComment?.text,\n    lastModified: review.comments[0]?.userComment?.lastModified,\n    device: review.comments[0]?.userComment?.device,\n    androidOsVersion: review.comments[0]?.userComment?.androidOsVersion,\n    appVersionCode: review.comments[0]?.userComment?.appVersionCode,\n    reviewerLanguage: review.comments[0]?.userComment?.reviewerLanguage\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        832
+      ],
+      "id": "3b3f18cd-b9c7-4731-bded-49c210eeb5d9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "useJson": true,
+        "claimsJson": "={\n    \"iss\": \"{{ $env.GOOGLE_SERVICE_ACCOUNT_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jwt",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        832
+      ],
+      "id": "81b228b7-6e70-4b88-a196-39509f172916",
+      "name": "JWT",
+      "credentials": {
+        "jwtAuth": {
+          "id": null,
+          "name": "JWT Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Schedule - Every 6 Hours2",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        832
+      ],
+      "id": "6d72bfd2-7eee-4320-8083-1801e147f3b8"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/' + $env.GOOGLE_PLAY_PACKAGE_NAME + '/reviews?maxResults=10' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        832
+      ],
+      "id": "4b3d5abb-dff7-4901-be7a-9c98e9d0109d",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are an expert customer service analyst specializing in Google Play Store reviews. Your task is to analyze reviews and provide structured insights.\n\nYou MUST respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.\n\nRequired JSON structure:\n{\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"category\": \"bug\" | \"feature_request\" | \"complaint\" | \"praise\" | \"general_feedback\" | \"performance\" | \"ui_ux\" | \"pricing\" | \"compatibility\",\n  \"key_issues\": [\"specific issue 1\", \"specific issue 2\"],\n  \"urgency\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"summary\": \"one clear sentence summarizing the core feedback\",\n  \"response_tone\": \"apologetic\" | \"grateful\" | \"helpful\" | \"empathetic\" | \"professional\",\n  \"action_required\": true | false,\n  \"customer_emotion\": \"frustrated\" | \"angry\" | \"satisfied\" | \"disappointed\" | \"happy\" | \"neutral\",\n  \"device_context\": \"brief note on device/OS relevance to the issue\"\n}\n\nMandatory:\nFinal output is available in this JSON format only. Do not output any other information. \n\nGuidelines:\n- sentiment: Overall tone of the review\n- category: Primary topic of feedback (use compatibility for device-specific issues)\n- key_issues: Extract 1-3 specific problems or points mentioned\n- urgency: Based on severity, customer emotion, and potential impact\n- summary: Concise, factual summary\n- response_tone: Best tone for responding\n- action_required: Does this need immediate follow-up?\n- customer_emotion: Detected emotional state\n- device_context: Note if device/Android version may be relevant",
+              "role": "model"
+            },
+            {
+              "content": "=Analyze this Google Play Store review:\n\n**Rating:** {{ $json.starRating }}/5 stars\n**Review Text:** {{ $json.text }}\n**Device:** {{ $json.device }}\n**Android Version:** {{ $json.androidOsVersion }}\n**App Version:** {{ $json.appVersionCode }}\n**Reviewer:** {{ $json.authorName }}\n\nProvide your analysis as a JSON object only."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        832,
+        1056
+      ],
+      "id": "dd27c137-7119-4caa-9398-6c809b355fa3",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI sentiment analysis response\nconst aiResponse = $input.first().json;\nconst loopData = $('Loop Over Items2').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  // Remove markdown formatting if present\n  contentText = content.parts[0].text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  const analysis = JSON.parse(contentText);\n  \n  // Return complete data structure with review info and analysis\n  return [{\n    json: {\n      review_id: loopData.reviewId,\n      author_name: loopData.authorName,\n      rating: loopData.rating,\n      review_text: loopData.text,\n      original_text: loopData.originalText,\n      device: loopData.device,\n      android_version: loopData.androidOsVersion,\n      app_version: loopData.appVersionCode,\n      last_modified: loopData.lastModified,\n      sentiment: analysis.sentiment,\n      category: analysis.category,\n      key_issues: analysis.key_issues,\n      urgency: analysis.urgency,\n      summary: analysis.summary,\n      response_tone: analysis.response_tone,\n      action_required: analysis.action_required,\n      customer_emotion: analysis.customer_emotion,\n      device_context: analysis.device_context\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse sentiment analysis',\n      details: error.message,\n      raw_response: aiResponse,\n      loop_data: loopData\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        1056
+      ],
+      "id": "2d9f357e-2251-453c-a54e-22da0bb60e25",
+      "name": "Parse Sentiment2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compile final response with all data\nconst aiResponse = $input.first().json;\nconst sentimentData = $('Parse Sentiment2').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  content = $input.first().json.content.parts[0].text.trim();\n  \n  // Return complete data structure\n  return [{\n    json: {\n      // Review Information\n      review_id: sentimentData.review_id,\n      author_name: sentimentData.author_name,\n      rating: sentimentData.rating,\n      review_text: sentimentData.review_text,\n      original_text: sentimentData.original_text,\n      device: sentimentData.device,\n      android_version: sentimentData.android_version,\n      app_version: sentimentData.app_version,\n      last_modified: sentimentData.last_modified,\n      \n      // Sentiment Analysis\n      sentiment: sentimentData.sentiment,\n      category: sentimentData.category,\n      key_issues: sentimentData.key_issues,\n      urgency: sentimentData.urgency,\n      summary: sentimentData.summary,\n      response_tone: sentimentData.response_tone,\n      action_required: sentimentData.action_required,\n      customer_emotion: sentimentData.customer_emotion,\n      device_context: sentimentData.device_context,\n      \n      // Generated Response\n      suggested_response: content,\n      response_generated_at: new Date().toISOString(),\n      \n      // Platform\n      platform: 'google_play'\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse response generation',\n      details: error.message,\n      raw_response: aiResponse\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        1136
+      ],
+      "id": "f1b3ff83-e04c-4726-b652-cee89073f053",
+      "name": "Parse Response2"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        608,
+        1136
+      ],
+      "id": "f483f13d-ab77-45e5-a120-31869b2da471",
+      "name": "Loop Over Items2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            },
+            {
+              "name": "assertion",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -64,
+        1136
+      ],
+      "id": "56b78556-8b1b-4acb-bcb2-cef875238616",
+      "name": "HTTP Request2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.first().json.reviews || [];\n\nreturn reviews.map(review => ({\n  json: {\n    reviewId: review.reviewId,\n    authorName: review.authorName,\n    starRating: review.comments[0]?.userComment?.starRating,\n    text: review.comments[0]?.userComment?.text,\n    lastModified: review.comments[0]?.userComment?.lastModified,\n    device: review.comments[0]?.userComment?.device,\n    androidOsVersion: review.comments[0]?.userComment?.androidOsVersion,\n    appVersionCode: review.comments[0]?.userComment?.appVersionCode,\n    reviewerLanguage: review.comments[0]?.userComment?.reviewerLanguage\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        1136
+      ],
+      "id": "95911657-80b0-4d6c-9d22-142918acb9c7",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "useJson": true,
+        "claimsJson": "={\n    \"iss\": \"{{ $env.GOOGLE_SERVICE_ACCOUNT_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jwt",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        1136
+      ],
+      "id": "1da7e52c-7543-44c6-978f-252659a41232",
+      "name": "JWT1",
+      "credentials": {
+        "jwtAuth": {
+          "id": null,
+          "name": "JWT Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Schedule - Every 6 Hours4",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        1136
+      ],
+      "id": "64cd5261-b6af-4361-8dc2-5f326a916296"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/' + $env.GOOGLE_PLAY_PACKAGE_NAME + '/reviews?maxResults=10' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        1136
+      ],
+      "id": "14f6ecf8-46a0-460a-b5c8-8cfb207d93ce",
+      "name": "HTTP Request3"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a senior customer service representative crafting personalized responses to Google Play Store reviews.\n",
+              "role": "model"
+            },
+            {
+              "content": "=**Customer Review Context:**\n\nReviewer: {{ $node['Parse Sentiment2'].json.author_name }}\nReview: {{ $node['Parse Sentiment2'].json.review_text }}\nDevice: {{ $node['Parse Sentiment2'].json.device }}\nAndroid Version: {{ $node['Parse Sentiment2'].json.android_version }}\nApp Version: {{ $node['Parse Sentiment2'].json.app_version }}\n\n**Analysis:**\nSentiment: {{ $node['Parse Sentiment2'].json.sentiment }}\nCategory: {{ $node['Parse Sentiment2'].json.category }}\nKey Issues: {{ $node['Parse Sentiment2'].json.key_issues }}\nUrgency Level: {{ $node['Parse Sentiment2'].json.urgency }}\nCustomer Emotion: {{ $node['Parse Sentiment2'].json.customer_emotion }}\nDevice Context: {{ $node['Parse Sentiment2'].json.device_context }}\nRecommended Tone: {{ $node['Parse Sentiment2'].json.response_tone }}\nAction Required: {{ $node['Parse Sentiment2'].json.action_required }}\n\nGenerate a personalized response draft following the framework. Address their specific concerns and device context directly."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        1056
+      ],
+      "id": "40bcbb2e-6cff-4a74-8c0b-7d5567923c89",
+      "name": "Message a model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Build a gemini based pipeline"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -848,
+        1104
+      ],
+      "typeVersion": 1,
+      "id": "ac81a3e1-841a-4059-9c04-a7166816d685",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Analyze Sentiment - OpenAI1": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment3": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Analyze Sentiment - OpenAI1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Apple Reviews1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Response - OpenAI1": {
+      "main": [
+        [
+          {
+            "node": "Parse Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment1": {
+      "main": [
+        [
+          {
+            "node": "Generate Response - OpenAI1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Apple Reviews1": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - Every 6 Hours1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Sentiment - OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Generate Response - OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Response - OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Analyze Sentiment - OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JWT": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - Every 6 Hours2": {
+      "main": [
+        [
+          {
+            "node": "JWT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment2": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JWT1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - Every 6 Hours4": {
+      "main": [
+        [
+          {
+            "node": "JWT1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "Parse Response2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "70e32189-5c3d-43d4-b281-8ad85462da4f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ad94278223ae7b7b51934ee27715d6048507a39638231babc14f248043bfcc98"
+  },
+  "id": "4X25AuQ5iEAWCGiVNPR0V",
+  "tags": []
+}
