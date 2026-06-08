@@ -400,7 +400,7 @@
           "cachedResultName": "joyn-tracking-dev",
           "cachedResultUrl": "https://console.cloud.google.com/bigquery?project=joyn-tracking-dev"
         },
-        "sqlQuery": "SELECT distinct review_id FROM `joyn-tracking-dev.aura360.ios_app_store_analysis` where inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)\n",
+        "sqlQuery": "=SELECT distinct review_id FROM `{{ $env.BIGQUERY_PROJECT_ID }}.{{ $env.BIGQUERY_DATASET }}.ios_app_store_analysis` where inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)\n",
         "options": {
           "rawOutput": false
         }
@@ -466,7 +466,7 @@
           "cachedResultName": "joyn-tracking-dev",
           "cachedResultUrl": "https://console.cloud.google.com/bigquery?project=joyn-tracking-dev"
         },
-        "sqlQuery": "SELECT distinct review_id FROM `joyn-tracking-dev.aura360.android_app_store_analysis` where inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)",
+        "sqlQuery": "=SELECT distinct review_id FROM `{{ $env.BIGQUERY_PROJECT_ID }}.{{ $env.BIGQUERY_DATASET }}.android_app_store_analysis` where inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)",
         "options": {}
       },
       "type": "n8n-nodes-base.googleBigQuery",
