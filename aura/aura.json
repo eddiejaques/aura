@@ -1,5 +1,5 @@
 {
-  "name": "App Reviews - Fetch & Analyze - DND4",
+  "name": "App Reviews - Fetch & Analyze - DND5",
   "nodes": [
     {
       "parameters": {
@@ -23,13 +23,13 @@
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 1.3,
       "position": [
-        608,
-        464
+        864,
+        1040
       ],
-      "id": "70fc7a39-5ce5-4614-9a4f-fe2b8d16da58",
+      "id": "2ae7a975-777b-4a6e-a118-3fdc13ff90f6",
       "credentials": {
         "openAiApi": {
-          "id": null,
+          "id": "T1Z73YJW1buyOpul",
           "name": "OpenAi account"
         }
       }
@@ -41,10 +41,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        160,
-        544
+        416,
+        1040
       ],
-      "id": "902fede8-5df6-44eb-9941-7dc76b6e7b90",
+      "id": "1f19341e-7bd3-44ed-90c6-5ea88457851f",
       "name": "Parse Sentiment3"
     },
     {
@@ -54,24 +54,11 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        384,
-        544
+        640,
+        1040
       ],
-      "id": "548526d1-3f26-4c07-acc2-4ad2e51094dc",
+      "id": "c3250794-d6cb-4249-af81-520f8d99d207",
       "name": "Loop Over Items"
-    },
-    {
-      "parameters": {
-        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Load credentials from n8n environment variables\nconst issuerID = $env.APPLE_ISSUER_ID;\nconst keyID = $env.APPLE_KEY_ID;\nconst privateKey = $env.APPLE_PRIVATE_KEY;\n\n// Validate that all required environment variables are set\nif (!issuerID || !keyID || !privateKey) {\n  throw new Error('Missing required environment variables: APPLE_ISSUER_ID, APPLE_KEY_ID, or APPLE_PRIVATE_KEY');\n}\n\nconst token = jwt.sign(\n  {\n    iss: issuerID,\n    exp: Math.floor(Date.now() / 1000) + (20 * 60),\n    aud: 'appstoreconnect-v1'\n  },\n  privateKey,\n  {\n    algorithm: 'ES256',\n    header: {\n      alg: 'ES256',\n      kid: keyID,\n      typ: 'JWT'\n    }\n  }\n);\n\nreturn [{ json: { token } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -288,
-        544
-      ],
-      "id": "883e8bef-0a83-4844-a8f6-d66a1a4d8765",
-      "name": "Code in JavaScript1"
     },
     {
       "parameters": {
@@ -80,10 +67,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1536,
-        544
+        1792,
+        1104
       ],
-      "id": "757dc1ff-8c93-468d-87d4-8446ca4d2411",
+      "id": "c878e636-c0cd-40e5-8ca2-9ebbf601567b",
       "name": "Parse Response1"
     },
     {
@@ -108,13 +95,13 @@
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 1.3,
       "position": [
-        1184,
-        464
+        1440,
+        1040
       ],
-      "id": "4d48f3f2-8f9e-441e-b346-f6ddd3656a0c",
+      "id": "42f7f519-2101-47ad-8440-110fe64c8f30",
       "credentials": {
         "openAiApi": {
-          "id": null,
+          "id": "T1Z73YJW1buyOpul",
           "name": "OpenAi account"
         }
       }
@@ -126,74 +113,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        960,
-        464
+        1216,
+        1040
       ],
-      "id": "478fc0cf-cb9b-47ea-8b98-c5b1b2c937ec",
+      "id": "8c60fe0d-3003-4792-a679-041a3ee52af0",
       "name": "Parse Sentiment1"
-    },
-    {
-      "parameters": {
-        "url": "={{ 'https://api.appstoreconnect.apple.com/v1/apps/' + $env.APPLE_APP_ID + '/customerReviews' }}",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "limit",
-              "value": "5"
-            },
-            {
-              "name": "sort",
-              "value": "-createdDate"
-            }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $json.token }}"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {}
-          ]
-        },
-        "options": {}
-      },
-      "name": "Fetch Apple Reviews1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [
-        -64,
-        544
-      ],
-      "id": "72b21721-73bd-4050-adb4-e7943956eb09",
-      "notes": "Fetches latest 5 reviews from App Store Connect API"
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "hours",
-              "hoursInterval": 6
-            }
-          ]
-        }
-      },
-      "name": "Schedule - Every 6 Hours1",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1,
-      "position": [
-        -512,
-        544
-      ],
-      "id": "be171b08-0441-4c05-894a-c364b3bc6643"
     },
     {
       "parameters": {
@@ -205,220 +129,10 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        0,
-        0
+        256,
+        400
       ],
-      "id": "4936216b-7ccd-4291-9cd7-2de7fc1e1372"
-    },
-    {
-      "parameters": {
-        "modelId": "gpt-4o-mini",
-        "messages": {
-          "values": [
-            {
-              "content": "You are an expert customer service analyst specializing in Google Play Store reviews. Your task is to analyze reviews and provide structured insights.\n\nYou MUST respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.\n\nRequired JSON structure:\n{\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"category\": \"bug\" | \"feature_request\" | \"complaint\" | \"praise\" | \"general_feedback\" | \"performance\" | \"ui_ux\" | \"pricing\" | \"compatibility\",\n  \"key_issues\": [\"specific issue 1\", \"specific issue 2\"],\n  \"urgency\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"summary\": \"one clear sentence summarizing the core feedback\",\n  \"response_tone\": \"apologetic\" | \"grateful\" | \"helpful\" | \"empathetic\" | \"professional\",\n  \"action_required\": true | false,\n  \"customer_emotion\": \"frustrated\" | \"angry\" | \"satisfied\" | \"disappointed\" | \"happy\" | \"neutral\",\n  \"device_context\": \"brief note on device/OS relevance to the issue\"\n}\n\nGuidelines:\n- sentiment: Overall tone of the review\n- category: Primary topic of feedback (use compatibility for device-specific issues)\n- key_issues: Extract 1-3 specific problems or points mentioned\n- urgency: Based on severity, customer emotion, and potential impact\n- summary: Concise, factual summary\n- response_tone: Best tone for responding\n- action_required: Does this need immediate follow-up?\n- customer_emotion: Detected emotional state\n- device_context: Note if device/Android version may be relevant",
-              "role": "system"
-            },
-            {
-              "content": "=Analyze this Google Play Store review:\n\n**Rating:** {{ $json.rating }}/5 stars\n**Review Text:** {{ $json.text }}\n**Device:** {{ $json.device }}\n**Android Version:** {{ $json.androidOsVersion }}\n**App Version:** {{ $json.appVersionCode }}\n**Reviewer:** {{ $json.authorName }}\n\nProvide your analysis as a JSON object only."
-            }
-          ]
-        },
-        "options": {
-          "temperature": 0.3
-        }
-      },
-      "name": "Analyze Sentiment - OpenAI",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 1.3,
-      "position": [
-        832,
-        768
-      ],
-      "id": "72b22289-9e7a-4ff3-9a88-86585b06d23a",
-      "credentials": {
-        "openAiApi": {
-          "id": null,
-          "name": "OpenAi account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Parse OpenAI sentiment analysis response\nconst aiResponse = $input.first().json;\nconst loopData = $('Loop Over Items1').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  // Remove markdown formatting if present\n  content = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const analysis = JSON.parse(content);\n  \n  // Return complete data structure with review info and analysis\n  return [{\n    json: {\n      review_id: loopData.reviewId,\n      author_name: loopData.authorName,\n      rating: loopData.rating,\n      review_text: loopData.text,\n      original_text: loopData.originalText,\n      device: loopData.device,\n      android_version: loopData.androidOsVersion,\n      app_version: loopData.appVersionCode,\n      last_modified: loopData.lastModified,\n      sentiment: analysis.sentiment,\n      category: analysis.category,\n      key_issues: analysis.key_issues,\n      urgency: analysis.urgency,\n      summary: analysis.summary,\n      response_tone: analysis.response_tone,\n      action_required: analysis.action_required,\n      customer_emotion: analysis.customer_emotion,\n      device_context: analysis.device_context\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse sentiment analysis',\n      details: error.message,\n      raw_response: aiResponse,\n      loop_data: loopData\n    }\n  }];\n}"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1184,
-        768
-      ],
-      "id": "0496f724-63a6-404b-99b6-06d466178001",
-      "name": "Parse Sentiment"
-    },
-    {
-      "parameters": {
-        "modelId": "gpt-4o-mini",
-        "messages": {
-          "values": [
-            {
-              "content": "You are a senior customer service representative crafting personalized responses to Google Play Store reviews.\n\n**Response Framework:**\n\n1. **Greeting & Gratitude** (1 sentence)\n   - Thank them by name if available\n   - Acknowledge their time in writing the review\n\n2. **Empathy & Validation** (1-2 sentences)\n   - Show you understand their specific concern\n   - Validate their feelings or experience\n   - Reference specific details from their review\n   - Acknowledge device/OS context if relevant\n\n3. **Solution or Action** (2-3 sentences)\n   - For bugs: Acknowledge issue, mention if it's being fixed, reference device info if relevant\n   - For feature requests: Show interest, explain if planned\n   - For praise: Express appreciation, mention team recognition\n   - For complaints: Offer concrete next steps or solutions\n   - For compatibility issues: Mention testing on specific devices/Android versions\n\n4. **Call to Action** (1 sentence)\n   - Provide contact info for urgent issues\n   - For device-specific bugs: Ask for more details (device model, Android version, app version)\n   - Invite them to try new version\n   - Encourage continued feedback\n\n5. **Professional Close** (1 sentence)\n   - Sign off warmly\n   - Reinforce you value their business\n\n**Tone Guidelines:**\n- Match the response_tone from analysis\n- Be genuine, not robotic or template-like\n- Use conversational but professional language\n- Avoid corporate jargon\n- Keep under 200 words\n- NO markdown formatting or asterisks\n- Write in plain text only\n\n**Critical:** This is a DRAFT for human review before posting. Be helpful and authentic.",
-              "role": "system"
-            },
-            {
-              "content": "=**Customer Review Context:**\n\nReviewer: {{ $node['Parse Sentiment'].json.author_name }}\nRating: {{ $node['Parse Sentiment'].json.rating }}/5 stars\nReview: {{ $node['Parse Sentiment'].json.review_text }}\nDevice: {{ $node['Parse Sentiment'].json.device }}\nAndroid Version: {{ $node['Parse Sentiment'].json.android_version }}\nApp Version: {{ $node['Parse Sentiment'].json.app_version }}\n\n**Analysis:**\nSentiment: {{ $node['Parse Sentiment'].json.sentiment }}\nCategory: {{ $node['Parse Sentiment'].json.category }}\nKey Issues: {{ $node['Parse Sentiment'].json.key_issues }}\nUrgency Level: {{ $node['Parse Sentiment'].json.urgency }}\nCustomer Emotion: {{ $node['Parse Sentiment'].json.customer_emotion }}\nDevice Context: {{ $node['Parse Sentiment'].json.device_context }}\nRecommended Tone: {{ $node['Parse Sentiment'].json.response_tone }}\nAction Required: {{ $node['Parse Sentiment'].json.action_required }}\n\nGenerate a personalized response draft following the framework. Address their specific concerns and device context directly."
-            }
-          ]
-        },
-        "options": {
-          "temperature": 0.7
-        }
-      },
-      "name": "Generate Response - OpenAI",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 1.3,
-      "position": [
-        1408,
-        768
-      ],
-      "id": "9ee91f3e-454d-4898-bfd0-79bf9859cd72",
-      "credentials": {
-        "openAiApi": {
-          "id": null,
-          "name": "OpenAi account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Compile final response with all data\nconst aiResponse = $input.first().json;\nconst sentimentData = $('Parse Sentiment').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  content = content.trim();\n  \n  // Return complete data structure\n  return [{\n    json: {\n      // Review Information\n      review_id: sentimentData.review_id,\n      author_name: sentimentData.author_name,\n      rating: sentimentData.rating,\n      review_text: sentimentData.review_text,\n      original_text: sentimentData.original_text,\n      device: sentimentData.device,\n      android_version: sentimentData.android_version,\n      app_version: sentimentData.app_version,\n      last_modified: sentimentData.last_modified,\n      \n      // Sentiment Analysis\n      sentiment: sentimentData.sentiment,\n      category: sentimentData.category,\n      key_issues: sentimentData.key_issues,\n      urgency: sentimentData.urgency,\n      summary: sentimentData.summary,\n      response_tone: sentimentData.response_tone,\n      action_required: sentimentData.action_required,\n      customer_emotion: sentimentData.customer_emotion,\n      device_context: sentimentData.device_context,\n      \n      // Generated Response\n      suggested_response: content,\n      response_generated_at: new Date().toISOString(),\n      \n      // Platform\n      platform: 'google_play'\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse response generation',\n      details: error.message,\n      raw_response: aiResponse\n    }\n  }];\n}"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1760,
-        832
-      ],
-      "id": "9cb7d0da-b395-43ea-aca2-4aade3093161",
-      "name": "Parse Response"
-    },
-    {
-      "parameters": {
-        "options": {}
-      },
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [
-        608,
-        832
-      ],
-      "id": "fb53edbe-57e7-4b00-ac27-9e75f6fba53f",
-      "name": "Loop Over Items1"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "grant_type",
-              "value": "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            },
-            {
-              "name": "assertion",
-              "value": "={{ $json.token }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        -64,
-        832
-      ],
-      "id": "39575dab-becf-4a3b-823d-22bea4729a6a",
-      "name": "HTTP Request"
-    },
-    {
-      "parameters": {
-        "jsCode": "const reviews = $input.first().json.reviews || [];\n\nreturn reviews.map(review => ({\n  json: {\n    reviewId: review.reviewId,\n    authorName: review.authorName,\n    starRating: review.comments[0]?.userComment?.starRating,\n    text: review.comments[0]?.userComment?.text,\n    lastModified: review.comments[0]?.userComment?.lastModified,\n    device: review.comments[0]?.userComment?.device,\n    androidOsVersion: review.comments[0]?.userComment?.androidOsVersion,\n    appVersionCode: review.comments[0]?.userComment?.appVersionCode,\n    reviewerLanguage: review.comments[0]?.userComment?.reviewerLanguage\n  }\n}));"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        384,
-        832
-      ],
-      "id": "3b3f18cd-b9c7-4731-bded-49c210eeb5d9",
-      "name": "Code in JavaScript"
-    },
-    {
-      "parameters": {
-        "useJson": true,
-        "claimsJson": "={\n    \"iss\": \"{{ $env.GOOGLE_SERVICE_ACCOUNT_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.jwt",
-      "typeVersion": 1,
-      "position": [
-        -288,
-        832
-      ],
-      "id": "81b228b7-6e70-4b88-a196-39509f172916",
-      "name": "JWT",
-      "credentials": {
-        "jwtAuth": {
-          "id": null,
-          "name": "JWT Auth account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "hours",
-              "hoursInterval": 6
-            }
-          ]
-        }
-      },
-      "name": "Schedule - Every 6 Hours2",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1,
-      "position": [
-        -512,
-        832
-      ],
-      "id": "6d72bfd2-7eee-4320-8083-1801e147f3b8"
-    },
-    {
-      "parameters": {
-        "url": "={{ 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/' + $env.GOOGLE_PLAY_PACKAGE_NAME + '/reviews?maxResults=10' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $json.access_token }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        160,
-        832
-      ],
-      "id": "4b3d5abb-dff7-4901-be7a-9c98e9d0109d",
-      "name": "HTTP Request1"
+      "id": "eef9a033-8735-48af-89e4-a6e37809d07c"
     },
     {
       "parameters": {
@@ -445,14 +159,14 @@
       "type": "@n8n/n8n-nodes-langchain.googleGemini",
       "typeVersion": 1.1,
       "position": [
-        832,
-        1056
+        3520,
+        1552
       ],
-      "id": "dd27c137-7119-4caa-9398-6c809b355fa3",
+      "id": "3dc6fea5-ba15-4eb7-9379-fda01ab07834",
       "name": "Message a model",
       "credentials": {
         "googlePalmApi": {
-          "id": null,
+          "id": "rkZf2h4vgDxBEXfN",
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -464,10 +178,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1184,
-        1056
+        3872,
+        1552
       ],
-      "id": "2d9f357e-2251-453c-a54e-22da0bb60e25",
+      "id": "5433c728-7336-4065-bf53-f841f6630600",
       "name": "Parse Sentiment2"
     },
     {
@@ -477,10 +191,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1760,
-        1136
+        4448,
+        1632
       ],
-      "id": "f1b3ff83-e04c-4726-b652-cee89073f053",
+      "id": "964d299d-b087-47a9-9c9c-7bbab79d423a",
       "name": "Parse Response2"
     },
     {
@@ -490,10 +204,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        608,
-        1136
+        3296,
+        1552
       ],
-      "id": "f483f13d-ab77-45e5-a120-31869b2da471",
+      "id": "d14a2f52-02fe-48bd-8c9d-d0eaaeb07ef4",
       "name": "Loop Over Items2"
     },
     {
@@ -518,10 +232,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -64,
-        1136
+        2624,
+        1552
       ],
-      "id": "56b78556-8b1b-4acb-bcb2-cef875238616",
+      "id": "558cadf3-04bd-4943-b8f7-c1524ceee99c",
       "name": "HTTP Request2"
     },
     {
@@ -531,52 +245,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        384,
-        1136
+        3072,
+        1552
       ],
-      "id": "95911657-80b0-4d6c-9d22-142918acb9c7",
+      "id": "b17ec677-dc02-454f-bf1b-ca89d46ea685",
       "name": "Code in JavaScript2"
-    },
-    {
-      "parameters": {
-        "useJson": true,
-        "claimsJson": "={\n    \"iss\": \"{{ $env.GOOGLE_SERVICE_ACCOUNT_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.jwt",
-      "typeVersion": 1,
-      "position": [
-        -288,
-        1136
-      ],
-      "id": "1da7e52c-7543-44c6-978f-252659a41232",
-      "name": "JWT1",
-      "credentials": {
-        "jwtAuth": {
-          "id": null,
-          "name": "JWT Auth account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "hours",
-              "hoursInterval": 6
-            }
-          ]
-        }
-      },
-      "name": "Schedule - Every 6 Hours4",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1,
-      "position": [
-        -512,
-        1136
-      ],
-      "id": "64cd5261-b6af-4361-8dc2-5f326a916296"
     },
     {
       "parameters": {
@@ -595,10 +268,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        160,
-        1136
+        2848,
+        1552
       ],
-      "id": "14f6ecf8-46a0-460a-b5c8-8cfb207d93ce",
+      "id": "65840a5e-c393-47f0-a20f-b4f42df793ed",
       "name": "HTTP Request3"
     },
     {
@@ -626,14 +299,14 @@
       "type": "@n8n/n8n-nodes-langchain.googleGemini",
       "typeVersion": 1.1,
       "position": [
-        1408,
-        1056
+        4096,
+        1552
       ],
-      "id": "40bcbb2e-6cff-4a74-8c0b-7d5567923c89",
+      "id": "e2e0e929-42de-4b7a-b869-0a16d246c854",
       "name": "Message a model1",
       "credentials": {
         "googlePalmApi": {
-          "id": null,
+          "id": "rkZf2h4vgDxBEXfN",
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -648,8 +321,366 @@
         1104
       ],
       "typeVersion": 1,
-      "id": "ac81a3e1-841a-4059-9c04-a7166816d685",
+      "id": "43179c1c-5c15-4e17-bbdd-97f3690c3970",
       "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nreturn $input.all().map(item => {\n  const reviewName = item.json.reviewer_nickname;  // correct field name from your schema\n  const timestamp = item.json.response_generated_at;\n\n  const id = crypto\n    .createHash('sha256')\n    .update(`${timestamp}${reviewName}`)\n    .digest('hex')\n    .substring(0, 32);\n\n  return { json: { ...item.json, id } };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        848
+      ],
+      "id": "d2de500d-53f6-4e05-81bf-7b5e75c471e6",
+      "name": "Add Unique ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nreturn $input.all().map(item => {\n  const data = item.json;\n\n  // Convert last_modified {seconds, nanos} → ISO timestamp string\n  const seconds = parseInt(data.last_modified.seconds);\n  const nanos = data.last_modified.nanos || 0;\n  const last_modified = new Date(seconds * 1000 + nanos / 1000000).toISOString();\n\n  // Generate ID\n  const id = data.id || crypto\n    .createHash('sha256')\n    .update(`${data.response_generated_at}${data.author_name}`)\n    .digest('hex')\n    .substring(0, 32);\n\n  return {\n    json: {\n      ...data,\n      last_modified,  // overwrite the nested object with flat ISO string\n      id\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        1360
+      ],
+      "id": "7200a953-c328-4b67-b274-b98a84497f80",
+      "name": "Add Unique ID - Android"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "insert",
+        "projectId": {
+          "__rl": true,
+          "value": "joyn-tracking-dev",
+          "mode": "list",
+          "cachedResultName": "joyn-tracking-dev",
+          "cachedResultUrl": "https://console.cloud.google.com/bigquery?project=joyn-tracking-dev"
+        },
+        "datasetId": {
+          "__rl": true,
+          "value": "aura360",
+          "mode": "list",
+          "cachedResultName": "aura360"
+        },
+        "tableId": {
+          "__rl": true,
+          "value": "android_app_store_analysis",
+          "mode": "list",
+          "cachedResultName": "android_app_store_analysis"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleBigQuery",
+      "typeVersion": 2.1,
+      "position": [
+        4736,
+        1344
+      ],
+      "id": "b33461b7-feb1-47d1-b013-2970113743f0",
+      "name": "Insert rows in a table - Android",
+      "credentials": {
+        "googleApi": {
+          "id": "ECfVNYf97APoaxyY",
+          "name": "Google BigQuery Account V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "projectId": {
+          "__rl": true,
+          "value": "joyn-tracking-dev",
+          "mode": "list",
+          "cachedResultName": "joyn-tracking-dev",
+          "cachedResultUrl": "https://console.cloud.google.com/bigquery?project=joyn-tracking-dev"
+        },
+        "sqlQuery": "SELECT distinct review_id FROM `joyn-tracking-dev.aura360.ios_app_store_analysis` where inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)\n",
+        "options": {
+          "rawOutput": false
+        }
+      },
+      "type": "n8n-nodes-base.googleBigQuery",
+      "typeVersion": 2.1,
+      "position": [
+        1216,
+        848
+      ],
+      "id": "b24d9029-fe73-4a45-9d5b-84b72682e982",
+      "name": "Execute a SQL query - iOS",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "ECfVNYf97APoaxyY",
+          "name": "Google BigQuery Account V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all existing IDs from BigQuery result\nconst existingIds = new Set(\n  $input.all().map(item => item.json.review_id)\n);\n\n// Get the transformed records from the earlier Code node\nconst newRecords = $('Add Unique ID').all();\n\n// Filter to only records not already in BigQuery\nconst toInsert = newRecords.filter(item => \n  !existingIds.has(item.json.review_id)\n);\n\nif (toInsert.length === 0) {\n  // Return empty — BigQuery insert node will have nothing to process\n  return [];\n}\n\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        848
+      ],
+      "id": "1f01c744-68cc-41d5-ba41-41551ad8bf72",
+      "name": "Check Duplicates",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtMinute": 24
+            }
+          ]
+        }
+      },
+      "name": "Schedule - Every 24 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -256,
+        1040
+      ],
+      "id": "cbe3f11c-5a72-40bf-88ec-869d9d328698"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "projectId": {
+          "__rl": true,
+          "value": "joyn-tracking-dev",
+          "mode": "list",
+          "cachedResultName": "joyn-tracking-dev",
+          "cachedResultUrl": "https://console.cloud.google.com/bigquery?project=joyn-tracking-dev"
+        },
+        "sqlQuery": "SELECT distinct review_id FROM `joyn-tracking-dev.aura360.android_app_store_analysis` where inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleBigQuery",
+      "typeVersion": 2.1,
+      "position": [
+        3872,
+        1360
+      ],
+      "id": "7862fe3c-6e82-4797-9612-b8741e4c35dc",
+      "name": "Execute a SQL query - Android",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "ECfVNYf97APoaxyY",
+          "name": "Google BigQuery Account V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all existing IDs from BigQuery result\nconst existingIds = new Set(\n  $input.all().map(item => item.json.review_id)\n);\n\n// Get the transformed records from the earlier Code node\nconst newRecords = $('Add Unique ID').all();\n\n// Filter to only records not already in BigQuery\nconst toInsert = newRecords.filter(item => \n  !existingIds.has(item.json.review_id)\n);\n\nif (toInsert.length === 0) {\n  // Return empty — BigQuery insert node will have nothing to process\n  return [];\n}\n\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        1360
+      ],
+      "id": "7a5f16d0-f180-490a-afdf-c04c71f672b0",
+      "name": "Check Duplicates-Android",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "useJson": true,
+        "claimsJson": "={\n    \"iss\": \"app-user-review-agent@prod-joynde---ga4.iam.gserviceaccount.com\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jwt",
+      "typeVersion": 1,
+      "position": [
+        2288,
+        864
+      ],
+      "id": "2a4a2fa9-3b0f-453e-b4a6-8afd9952c752",
+      "name": "Android - JWT - Begins",
+      "credentials": {
+        "jwtAuth": {
+          "id": "KvLxwjUywatV7u3h",
+          "name": "JWT Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Load credentials from n8n environment variables\nconst issuerID = $env.APPLE_ISSUER_ID;\nconst keyID = $env.APPLE_KEY_ID;\nconst privateKey = $env.APPLE_PRIVATE_KEY;\n\n// Validate that all required environment variables are set\nif (!issuerID || !keyID || !privateKey) {\n  throw new Error('Missing required environment variables: APPLE_ISSUER_ID, APPLE_KEY_ID, or APPLE_PRIVATE_KEY');\n}\n\nconst token = jwt.sign(\n  {\n    iss: issuerID,\n    exp: Math.floor(Date.now() / 1000) + (20 * 60),\n    aud: 'appstoreconnect-v1'\n  },\n  privateKey,\n  {\n    algorithm: 'ES256',\n    header: {\n      alg: 'ES256',\n      kid: keyID,\n      typ: 'JWT'\n    }\n  }\n);\n\nreturn [{ json: { token } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        1040
+      ],
+      "id": "cb9629af-432f-42a9-844a-d0392d12f06e",
+      "name": "Create JWT"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.appstoreconnect.apple.com/v1/apps/' + $env.APPLE_APP_ID + '/customerReviews' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "10"
+            },
+            {
+              "name": "sort",
+              "value": "-createdDate"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "name": "Fetch IOS Reviews VIA API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        192,
+        1040
+      ],
+      "id": "8e9583f9-adf9-46ed-b1f2-762740f687ee",
+      "notes": "Fetches latest 5 reviews from App Store Connect API"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "insert",
+        "projectId": {
+          "__rl": true,
+          "value": "joyn-tracking-dev",
+          "mode": "list",
+          "cachedResultName": "joyn-tracking-dev",
+          "cachedResultUrl": "https://console.cloud.google.com/bigquery?project=joyn-tracking-dev"
+        },
+        "datasetId": {
+          "__rl": true,
+          "value": "aura360",
+          "mode": "list",
+          "cachedResultName": "aura360"
+        },
+        "tableId": {
+          "__rl": true,
+          "value": "ios_app_store_analysis",
+          "mode": "list",
+          "cachedResultName": "ios_app_store_analysis"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleBigQuery",
+      "typeVersion": 2.1,
+      "position": [
+        2016,
+        768
+      ],
+      "id": "6082231b-7217-4d64-bdc4-19b460643d88",
+      "name": "Insert rows in iOS Table",
+      "credentials": {
+        "googleApi": {
+          "id": "ECfVNYf97APoaxyY",
+          "name": "Google BigQuery Account V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "dcd952c3-1d18-4f38-afa4-5d3ef36e55d2",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1792,
+        848
+      ],
+      "id": "f6e70669-ac6e-44b3-812f-725d4cbffb7a",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f064f6d5-720d-485f-bf0e-b6142fc84b62",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4448,
+        1360
+      ],
+      "id": "ff27382b-f990-4501-b3a4-cea7fcb21ccc",
+      "name": "If1"
     }
   ],
   "pinData": {},
@@ -678,21 +709,16 @@
     },
     "Loop Over Items": {
       "main": [
-        [],
         [
           {
-            "node": "Analyze Sentiment - OpenAI1",
+            "node": "Add Unique ID",
             "type": "main",
             "index": 0
           }
-        ]
-      ]
-    },
-    "Code in JavaScript1": {
-      "main": [
+        ],
         [
           {
-            "node": "Fetch Apple Reviews1",
+            "node": "Analyze Sentiment - OpenAI1",
             "type": "main",
             "index": 0
           }
@@ -732,139 +758,6 @@
         ]
       ]
     },
-    "Fetch Apple Reviews1": {
-      "main": [
-        [
-          {
-            "node": "Parse Sentiment3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Schedule - Every 6 Hours1": {
-      "main": [
-        [
-          {
-            "node": "Code in JavaScript1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Analyze Sentiment - OpenAI": {
-      "main": [
-        [
-          {
-            "node": "Parse Sentiment",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse Sentiment": {
-      "main": [
-        [
-          {
-            "node": "Generate Response - OpenAI",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Response - OpenAI": {
-      "main": [
-        [
-          {
-            "node": "Parse Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse Response": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Loop Over Items1": {
-      "main": [
-        [],
-        [
-          {
-            "node": "Analyze Sentiment - OpenAI",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "HTTP Request": {
-      "main": [
-        [
-          {
-            "node": "HTTP Request1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code in JavaScript": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "JWT": {
-      "main": [
-        [
-          {
-            "node": "HTTP Request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Schedule - Every 6 Hours2": {
-      "main": [
-        [
-          {
-            "node": "JWT",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "HTTP Request1": {
-      "main": [
-        [
-          {
-            "node": "Code in JavaScript",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Parse Sentiment2": {
       "main": [
         [
@@ -889,7 +782,13 @@
     },
     "Loop Over Items2": {
       "main": [
-        [],
+        [
+          {
+            "node": "Add Unique ID - Android",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Message a model",
@@ -915,28 +814,6 @@
         [
           {
             "node": "Loop Over Items2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "JWT1": {
-      "main": [
-        [
-          {
-            "node": "HTTP Request2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Schedule - Every 6 Hours4": {
-      "main": [
-        [
-          {
-            "node": "JWT1",
             "type": "main",
             "index": 0
           }
@@ -975,18 +852,173 @@
           }
         ]
       ]
+    },
+    "Add Unique ID": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - iOS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Unique ID - Android": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - Android",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - iOS": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - Every 24 hours": {
+      "main": [
+        [
+          {
+            "node": "Create JWT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - Android": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates-Android",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates-Android": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table - Android": {
+      "main": [
+        []
+      ]
+    },
+    "Android - JWT - Begins": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create JWT": {
+      "main": [
+        [
+          {
+            "node": "Fetch IOS Reviews VIA API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch IOS Reviews VIA API": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in iOS Table": {
+      "main": [
+        [
+          {
+            "node": "Android - JWT - Begins",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in iOS Table",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Android - JWT - Begins",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table - Android",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "70e32189-5c3d-43d4-b281-8ad85462da4f",
+  "versionId": "eb93f67d-9388-4409-83cd-bff20d55605d",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "ad94278223ae7b7b51934ee27715d6048507a39638231babc14f248043bfcc98"
   },
-  "id": "4X25AuQ5iEAWCGiVNPR0V",
+  "id": "WXusTNjJSNZiI1vM",
   "tags": []
 }
