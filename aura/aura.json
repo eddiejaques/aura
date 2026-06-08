@@ -502,7 +502,7 @@
     {
       "parameters": {
         "useJson": true,
-        "claimsJson": "={\n    \"iss\": \"app-user-review-agent@prod-joynde---ga4.iam.gserviceaccount.com\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
+        "claimsJson": "={\n    \"iss\": \"{{ $env.GOOGLE_SERVICE_ACCOUNT_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
         "options": {}
       },
       "type": "n8n-nodes-base.jwt",
