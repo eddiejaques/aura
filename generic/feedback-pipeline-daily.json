@@ -81,7 +81,7 @@
     },
     {
       "parameters": {
-        "content": "## Apple App Store Review Processing\n\nThis workflow:\n1. Runs every 6 hours\n2. Generates JWT token for Apple API\n3. Fetches latest 5 reviews\n4. Splits review data array\n5. Analyzes sentiment with AI\n6. Parses sentiment JSON\n7. Generates suggested responses\n8. Parses response output\n\n**Data Flow:**\n- Split Out: Separates review array into individual items\n- Parse Sentiment: Extracts JSON from AI response and combines with review data\n- Parse Response: Extracts final response and creates complete output\n\n**Setup Required:**\n- Credentials: OpenAI API\n- JWT credentials in Code node",
+        "content": "## App Store Review Processing\n\n1. Runs daily\n2. Generates a JWT for the App Store Connect API (ES256)\n3. Fetches the latest reviews\n4. Splits the review array into individual items\n5. Classifies each with the LLM (sentiment + one of 11 clusters)\n6. Parses the JSON and validates the category against an allow-list\n7. Hashes a stable, PII-free id\n8. Dedups against the table, then inserts only new rows\n\n**Data flow:**\n- Parse Sentiment3: separates the review array into individual items\n- Parse Sentiment1: extracts JSON from the model response, combines it with the review\n- Add Unique ID: hashes date + review id + author name; the name is NOT stored\n\n**Config (n8n env):** `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`, `APPLE_APP_ID`,\n`GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PLAY_PACKAGE_NAME`, `SNOWFLAKE_DATABASE`,\n`SNOWFLAKE_SCHEMA`.\n\n**Note:** the Android branch has no trigger of its own — it runs off the end of the iOS\nbranch (both outputs of the If node). See ADAPT.md before deleting or rewiring a branch.",
         "height": 592,
         "width": 300
       },
@@ -200,7 +200,7 @@
     },
     {
       "parameters": {
-        "url": "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.example.yourapp/reviews?maxResults=10",
+        "url": "=https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{{ $env.GOOGLE_PLAY_PACKAGE_NAME }}/reviews?maxResults=10",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -232,7 +232,7 @@
     },
     {
       "parameters": {
-        "content": "Build a gemini based pipeline"
+        "content": "LLM-based classification pipeline"
       },
       "type": "n8n-nodes-base.stickyNote",
       "position": [
@@ -292,7 +292,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT DISTINCT id AS \"id\" FROM ANALYTICS.FEEDBACK.APP_STORE_REVIEWS WHERE platform = 'apple_app_store'"
+        "query": "=SELECT DISTINCT id AS \"id\" FROM {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}.APP_STORE_REVIEWS WHERE platform = 'apple_app_store'"
       },
       "type": "n8n-nodes-base.snowflake",
       "typeVersion": 1,
@@ -327,7 +327,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT DISTINCT id AS \"id\" FROM ANALYTICS.FEEDBACK.APP_STORE_REVIEWS WHERE platform = 'google_play'"
+        "query": "=SELECT DISTINCT id AS \"id\" FROM {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}.APP_STORE_REVIEWS WHERE platform = 'google_play'"
       },
       "type": "n8n-nodes-base.snowflake",
       "typeVersion": 1,
@@ -362,7 +362,7 @@
     {
       "parameters": {
         "useJson": true,
-        "claimsJson": "={\n    \"iss\": \"{{ $env.GCP_SA_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
+        "claimsJson": "={\n    \"iss\": \"{{ $env.GOOGLE_SERVICE_ACCOUNT_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
         "options": {}
       },
       "type": "n8n-nodes-base.jwt",
@@ -395,7 +395,7 @@
     },
     {
       "parameters": {
-        "url": "https://api.appstoreconnect.apple.com/v1/apps/YOUR_APPLE_APP_ID/customerReviews",
+        "url": "=https://api.appstoreconnect.apple.com/v1/apps/{{ $env.APPLE_APP_ID }}/customerReviews",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -525,7 +525,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT * FROM ANALYTICS.FEEDBACK.APP_STORE_REVIEWS WHERE platform = 'google_play' LIMIT 1000"
+        "query": "=SELECT * FROM {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}.APP_STORE_REVIEWS WHERE platform = 'google_play' LIMIT 1000"
       },
       "type": "n8n-nodes-base.snowflake",
       "typeVersion": 1,
@@ -565,7 +565,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: hardcoded list of Usersnap survey (project) IDs to ingest ===\nconst SURVEYS = [\n  { project_id: 'REPLACE_PROJECT_ID_1', survey_name: 'Web feedback survey' },\n  {project_id:'REPLACE_PROJECT_ID_2', survey_name:'NPS email survey'},\n  {\n    project_id:'REPLACE_PROJECT_ID_3', survey_name:'In-app feedback survey' \n  }\n  // , { project_id: 'REPLACE_PROJECT_ID_2', survey_name: 'survey 2' }\n];\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN (JWT secret) and/or USERSNAP_JWT_KID (JWT ID)');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nreturn SURVEYS.map(s => ({ json: { project_id: s.project_id, survey_name: s.survey_name, token } }));"
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Surveys come from the environment, aura-style, so nothing product-specific\n// lives in the workflow JSON.\n//\n//   USERSNAP_SURVEYS='[{\"project_id\":\"<uuid>\",\"survey_name\":\"Web feedback survey\"}]'\n//\nconst raw = $env.USERSNAP_SURVEYS;\nif (!raw) throw new Error('Missing env var: USERSNAP_SURVEYS (JSON array of {project_id, survey_name})');\n\nlet SURVEYS;\ntry {\n  SURVEYS = JSON.parse(raw);\n} catch (e) {\n  throw new Error('USERSNAP_SURVEYS is not valid JSON: ' + e.message);\n}\nif (!Array.isArray(SURVEYS) || SURVEYS.length === 0) {\n  throw new Error('USERSNAP_SURVEYS must be a non-empty JSON array');\n}\n\n// These ids are concatenated into SQL downstream. Now that they come from the\n// environment rather than a hardcoded list, validate them before they get there.\nconst UUID = /^[0-9a-fA-F-]{36}$/;\nfor (const s of SURVEYS) {\n  if (!UUID.test(String(s.project_id || ''))) {\n    throw new Error('Refusing to use a project_id that is not a UUID: ' + s.project_id);\n  }\n}\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN (JWT secret) and/or USERSNAP_JWT_KID (JWT ID)');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nreturn SURVEYS.map(s => ({ json: { project_id: s.project_id, survey_name: s.survey_name ?? null, token } }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -631,7 +631,7 @@
     },
     {
       "parameters": {
-        "content": "## Usersnap -> Snowflake (v2)\n\nMirrors the iOS/Android review branches: bounded fetch + per-item LLM tag + feedback_id dedup.\n\n1. Sign HS256 JWT (kid + secret), emit hardcoded survey list\n2. Fetch **latest 20/project** (no pagination)\n3. Flatten -> one row/feedback; generic `questions` JSON; derive rating + feedback_text; **drop `email`**\n4. Loop: Gemini classifies into one of 11 clusters -> `category`\n5. SELECT DISTINCT feedback_id -> keep only new -> If -> Insert\n\n**Secrets (n8n env):** USERSNAP_TOKEN, USERSNAP_JWT_KID\n**Snowflake cred** targets ANALYTICS / FEEDBACK. **Gemini cred** = Google Gemini(PaLM).\n\nBackfill of last 90 days lives in the separate `Feedback Pipeline - Backfill` workflow.\niOS/Android review pipeline untouched.",
+        "content": "## Survey feedback -> warehouse\n\nMirrors the iOS/Android review branches: bounded fetch + per-item LLM tag + feedback_id dedup.\n\n1. Sign HS256 JWT (kid + secret), read the survey list from env\n2. Fetch **latest 20/project** (no pagination — use the backfill workflow for history)\n3. Flatten -> one row/feedback; generic `questions` JSON; derive rating + feedback_text;\n   **drop `email`** from the item and from the retained raw payload\n4. Loop: the model classifies into one of 11 clusters -> `category`, validated in code\n5. SELECT DISTINCT feedback_id -> keep only new -> If -> Insert\n\n**Config (n8n env):** `USERSNAP_SURVEYS` (JSON array of `{project_id, survey_name}`),\n`USERSNAP_TOKEN`, `USERSNAP_JWT_KID`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`.\n\nCredentials to re-link on import: Snowflake, and Google Gemini(PaLM).",
         "height": 400,
         "width": 340
       },
@@ -738,7 +738,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Usersnap Surveys + JWT').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Usersnap Surveys + JWT').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
       },
       "type": "n8n-nodes-base.snowflake",
       "typeVersion": 1,

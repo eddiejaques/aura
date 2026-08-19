@@ -1,6 +1,11 @@
 -- Tables the two generic workflows write into.
 -- Written for Snowflake. See ADAPT.md for the BigQuery / Postgres equivalents.
 --
+-- ANALYTICS.FEEDBACK below is an example location. The workflows do not hardcode it:
+-- their dedup queries read {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}, and the
+-- insert nodes take database/schema from the Snowflake credential. Whatever you name these,
+-- set the same values in .env.example and in that credential.
+--
 -- Column order matters: the "columns" field on each Snowflake insert node in the
 -- workflow lists these names in exactly this order. If you add or reorder a column
 -- here, update the matching insert node too.

@@ -80,36 +80,60 @@ The `JWT Auth account` credential holds the **private key of your Google service
 Set these on the n8n process. Secrets are read via `$env` inside Code nodes and never stored in
 the workflow file — keep it that way.
 
+These follow the same naming as `aura/.env.example`, so both workflows in this repo can run
+against one environment file. A ready-to-copy version lives in [`.env.example`](.env.example).
+
 ```bash
 # Apple App Store Connect (iOS branch)
-APPLE_ISSUER_ID=...        # App Store Connect > Users and Access > Integrations
-APPLE_KEY_ID=...           # the key id of your API key
-APPLE_PRIVATE_KEY=...      # contents of the .p8 file, including the BEGIN/END lines
+APPLE_ISSUER_ID=...              # App Store Connect > Users and Access > Integrations
+APPLE_KEY_ID=...                 # the key id of your API key
+APPLE_PRIVATE_KEY=...            # contents of the .p8 file, including the BEGIN/END lines
+APPLE_APP_ID=...                 # numeric App Store app id, used in the fetch URL
 
 # Google Play (Android branch)
-GCP_SA_EMAIL=...           # service account with the androidpublisher scope
+GOOGLE_SERVICE_ACCOUNT_EMAIL=... # service account with the androidpublisher scope
+GOOGLE_PLAY_PACKAGE_NAME=...     # e.g. com.example.yourapp
 
-# Usersnap (survey branch + backfill)
-USERSNAP_TOKEN=...         # the JWT signing secret
-USERSNAP_JWT_KID=...       # the JWT key id
+# Warehouse — used by the fully-qualified dedup queries
+SNOWFLAKE_DATABASE=...
+SNOWFLAKE_SCHEMA=...
+
+# Survey feedback (survey branch + backfill)
+USERSNAP_TOKEN=...               # the JWT signing secret
+USERSNAP_JWT_KID=...             # the JWT key id
+USERSNAP_SURVEYS=[{"project_id":"<uuid>","survey_name":"Web feedback survey"}]
+USERSNAP_BACKFILL_DAYS=90        # backfill window; defaults to 90 if unset
 ```
+
+Two things to know about how these are wired:
+
+- **The dedup queries are n8n expressions** (they start with `=`), which is what lets
+  `{{ $env.SNOWFLAKE_DATABASE }}` evaluate. If you retype one of those queries and lose the
+  leading `=`, the `{{ }}` becomes literal text and the query fails.
+- **The Snowflake *insert* nodes take database and schema from the credential**, not from these
+  variables. Make sure the credential and `SNOWFLAKE_DATABASE`/`SNOWFLAKE_SCHEMA` agree, or you
+  will dedup against one table and insert into another — which looks like the dedup silently
+  not working.
 
 ## 5. The placeholders to replace
 
 Search the imported workflows for each of these:
 
+Almost everything is driven by the environment variables in §4, so there is only **one** literal
+placeholder left to edit by hand:
+
 | Placeholder | Where | Replace with |
 |---|---|---|
 | `YOUR_PRODUCT` | all 6 LLM prompts | your product's name, e.g. `Acme Music` |
-| `YOUR_APPLE_APP_ID` | `Fetch IOS Reviews VIA API` URL | your numeric App Store app id |
-| `com.example.yourapp` | `HTTP Request3` URL | your Android package name |
-| `REPLACE_PROJECT_ID_1/2/3` | the `SURVEYS` list in the config Code nodes | your Usersnap project ids |
-| `Web feedback survey` etc. | same `SURVEYS` list | your own survey labels (free text, stored as-is) |
-| `ANALYTICS.FEEDBACK` | 4 SQL query nodes | your database and schema |
 
-For the warehouse path: the Snowflake **insert** nodes take the database and schema from the
-credential, so only the `Execute a SQL query` nodes carry the fully-qualified name. Change the
-credential and those four queries and you're done.
+Everything else — app id, package name, service-account email, warehouse database and schema, and
+the survey list — now reads from `$env` and needs no edit inside the workflow.
+
+**Why the prompts are the exception.** An n8n field only evaluates `{{ ... }}` when it is an
+expression, and the classification prompts contain literal `{` and `}` characters (they specify a
+JSON response shape). Turning those fields into expressions would make n8n try to parse that JSON
+schema as templating and break the prompt. So the product name stays a plain string you edit once.
+It is also the field you are most likely to want to reword anyway.
 
 ## 6. The part that matters most: your themes
 
@@ -214,9 +238,11 @@ limits are deliberately small (100 reviews, 20 survey items) because the daily j
 catch up since yesterday; the dedup step makes a re-run harmless. Use the backfill workflow for
 history instead of widening the daily fetch.
 
-The backfill's window is a `DAYS` constant at the top of each `Backfill Config + JWT` node. It
-contains three near-identical branches, one per survey, which is copy-paste rather than good design —
-if you have more than a few surveys, make it one branch and drive it from a list.
+The backfill's window is `USERSNAP_BACKFILL_DAYS` (default 90). It contains three near-identical
+branches, one per survey: branch 1 reads `USERSNAP_SURVEYS[0]`, branch 2 `[1]`, branch 3 `[2]`.
+Configure fewer surveys and the spare branches return nothing rather than failing. That indexing is
+copy-paste rather than good design — with more than three surveys, make it one branch driven by the
+whole list.
 
 Its `Fetch All Feedback (paginated)` node is a hand-written `while (has_more)` loop rather than
 n8n's built-in HTTP pagination, because the built-in one did not advance the cursor on that
@@ -314,20 +340,29 @@ The five `Execute a SQL query - Usersnap*` nodes build their filter like this:
 WHERE project_id IN ({{ $('...').all().map(s => "'" + s.json.project_id + "'").join(',') }})
 ```
 
-That is string interpolation into SQL. **Today it is safe**, because the project ids come from a
-hardcoded `SURVEYS` list that you edit by hand — the values are yours, not a user's.
+That is string interpolation into SQL, and the project ids now come from `USERSNAP_SURVEYS` in the
+environment rather than a hardcoded list — so the values reaching that query are no longer literals
+sitting in the file.
 
-It stops being safe the moment that list comes from anywhere else. And §8 of this guide actively
-suggests exactly that ("make it one branch driven by a list"). If that list ever comes from an API
-response, a database table, an environment variable someone else can set, or a webhook, a value
-containing `'` will break the query, and a crafted value will change what it does.
+**The config nodes therefore validate them before use**, which is the mitigation this section used
+to only recommend:
 
-If you make the survey list dynamic, do one of these first:
+```js
+const UUID = /^[0-9a-fA-F-]{36}$/;
+for (const s of SURVEYS) {
+  if (!UUID.test(String(s.project_id || ''))) {
+    throw new Error('Refusing to use a project_id that is not a UUID: ' + s.project_id);
+  }
+}
+```
 
-- Pass the ids as query **parameters** rather than interpolating them, or
-- Query one project per item with a parameterised `WHERE project_id = ?`, or
-- At minimum, validate each id against a strict pattern before it reaches the query:
-  `if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('bad project id')`.
+An environment variable is operator-controlled, so this is defence in depth rather than a live
+hole. It stops mattering the moment the list comes from somewhere less trusted — an API response,
+a database table, a webhook — which is exactly the direction §8 pushes you.
+
+**The stronger fix, still worth doing:** pass the ids as query parameters instead of interpolating
+them, or query one project per item with `WHERE project_id = ?`. Validation rejects bad input;
+parameters make the question moot.
 
 The same applies to any new source you add in §8. The habit worth keeping: a value that came from
 outside your workflow never gets concatenated into SQL.

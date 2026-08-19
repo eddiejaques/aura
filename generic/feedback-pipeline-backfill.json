@@ -15,7 +15,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: same Usersnap surveys as the daily job ===\nconst SURVEYS = [\n  { project_id: 'REPLACE_PROJECT_ID_1', survey_name: 'Web feedback survey' }\n];\n\n// Backfill window (days). Edit here to change how far back to load.\nconst DAYS = 60;\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name, token, since,\n} }));"
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Surveys come from the environment, same variable as the daily workflow:\n//   USERSNAP_SURVEYS='[{\"project_id\":\"<uuid>\",\"survey_name\":\"...\"}]'\n//\n// This workflow still has one branch per survey (a copy-paste that ought to be\n// collapsed into a single branch). Branch 1 takes entry 0 of the list.\nconst raw = $env.USERSNAP_SURVEYS;\nif (!raw) throw new Error('Missing env var: USERSNAP_SURVEYS (JSON array of {project_id, survey_name})');\n\nlet ALL;\ntry {\n  ALL = JSON.parse(raw);\n} catch (e) {\n  throw new Error('USERSNAP_SURVEYS is not valid JSON: ' + e.message);\n}\n\nconst SURVEYS = ALL.slice(0, 0 + 1);\nif (SURVEYS.length === 0) {\n  // Fewer surveys configured than branches. Nothing for this branch to do.\n  return [];\n}\n\n// These ids reach SQL downstream, so validate before use.\nconst UUID = /^[0-9a-fA-F-]{36}$/;\nfor (const s of SURVEYS) {\n  if (!UUID.test(String(s.project_id || ''))) {\n    throw new Error('Refusing to use a project_id that is not a UUID: ' + s.project_id);\n  }\n}\n\n// Backfill window in days.\nconst DAYS = parseInt($env.USERSNAP_BACKFILL_DAYS || '90', 10);\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name ?? null, token, since,\n} }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -133,7 +133,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
       },
       "type": "n8n-nodes-base.snowflake",
       "typeVersion": 1,
@@ -221,7 +221,7 @@
     },
     {
       "parameters": {
-        "content": "## Usersnap Backfill (manual, one-off)\n\nLoads the last **30 days** into the SAME `ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK` table as the\ndaily job. Safe to run anytime — dedup is by `feedback_id`.\n\n1. Manual trigger\n2. Sign JWT + compute `since = now-30d` (edit DAYS in the config node)\n3. **Fetch All Feedback (paginated)** — a Code node that calls POST /feedbacks/filter in a\n   `while (has_more)` loop, advancing the `after` cursor, until all pages are fetched\n4. Flatten -> Gemini category -> SELECT DISTINCT feedback_id -> Insert new only\n\nExplicit loop replaces n8n's built-in pagination (unreliable on this POST endpoint).",
+        "content": "## Survey Backfill (manual, one-off)\n\nLoads a history window into the SAME table as the daily job. Safe to run anytime —\ndedup is by `feedback_id`.\n\n1. Manual trigger\n2. Sign JWT + compute `since = now - USERSNAP_BACKFILL_DAYS`\n3. **Fetch All Feedback (paginated)** — a Code node that calls POST /feedbacks/filter in a\n   `while (has_more)` loop, advancing the `after` cursor, until all pages are fetched\n   (n8n's built-in pagination does not advance the cursor on this POST endpoint)\n4. Flatten -> LLM category -> SELECT DISTINCT feedback_id -> Insert new only\n\n**Config (n8n env):**\n- `USERSNAP_SURVEYS` — JSON array of `{project_id, survey_name}`\n- `USERSNAP_BACKFILL_DAYS` — window in days (default 90)\n- `USERSNAP_TOKEN`, `USERSNAP_JWT_KID` — JWT secret and key id\n- `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA` — warehouse location\n\nEach branch handles ONE survey: branch 1 takes `USERSNAP_SURVEYS[0]`, branch 2 `[1]`, and so\non. Extra branches return nothing if you configure fewer surveys. This copy-paste ought to be\none branch driven by the whole list — see ADAPT.md.",
         "height": 468,
         "width": 380
       },
@@ -236,7 +236,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: same Usersnap surveys as the daily job ===\nconst SURVEYS = [\n  { project_id:'REPLACE_PROJECT_ID_2', survey_name:'NPS email survey' }\n];\n\n// Backfill window (days). Edit here to change how far back to load.\nconst DAYS = 90;\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name, token, since,\n} }));"
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Surveys come from the environment, same variable as the daily workflow:\n//   USERSNAP_SURVEYS='[{\"project_id\":\"<uuid>\",\"survey_name\":\"...\"}]'\n//\n// This workflow still has one branch per survey (a copy-paste that ought to be\n// collapsed into a single branch). Branch 2 takes entry 1 of the list.\nconst raw = $env.USERSNAP_SURVEYS;\nif (!raw) throw new Error('Missing env var: USERSNAP_SURVEYS (JSON array of {project_id, survey_name})');\n\nlet ALL;\ntry {\n  ALL = JSON.parse(raw);\n} catch (e) {\n  throw new Error('USERSNAP_SURVEYS is not valid JSON: ' + e.message);\n}\n\nconst SURVEYS = ALL.slice(1, 1 + 1);\nif (SURVEYS.length === 0) {\n  // Fewer surveys configured than branches. Nothing for this branch to do.\n  return [];\n}\n\n// These ids reach SQL downstream, so validate before use.\nconst UUID = /^[0-9a-fA-F-]{36}$/;\nfor (const s of SURVEYS) {\n  if (!UUID.test(String(s.project_id || ''))) {\n    throw new Error('Refusing to use a project_id that is not a UUID: ' + s.project_id);\n  }\n}\n\n// Backfill window in days.\nconst DAYS = parseInt($env.USERSNAP_BACKFILL_DAYS || '90', 10);\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name ?? null, token, since,\n} }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -354,7 +354,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT1').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT1').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
       },
       "type": "n8n-nodes-base.snowflake",
       "typeVersion": 1,
@@ -442,7 +442,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: same Usersnap surveys as the daily job ===\nconst SURVEYS = [\n  { project_id:'REPLACE_PROJECT_ID_3', survey_name:'In-app feedback survey' }\n];\n\n// Backfill window (days). Edit here to change how far back to load.\nconst DAYS = 90;\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name, token, since,\n} }));"
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Surveys come from the environment, same variable as the daily workflow:\n//   USERSNAP_SURVEYS='[{\"project_id\":\"<uuid>\",\"survey_name\":\"...\"}]'\n//\n// This workflow still has one branch per survey (a copy-paste that ought to be\n// collapsed into a single branch). Branch 3 takes entry 2 of the list.\nconst raw = $env.USERSNAP_SURVEYS;\nif (!raw) throw new Error('Missing env var: USERSNAP_SURVEYS (JSON array of {project_id, survey_name})');\n\nlet ALL;\ntry {\n  ALL = JSON.parse(raw);\n} catch (e) {\n  throw new Error('USERSNAP_SURVEYS is not valid JSON: ' + e.message);\n}\n\nconst SURVEYS = ALL.slice(2, 2 + 1);\nif (SURVEYS.length === 0) {\n  // Fewer surveys configured than branches. Nothing for this branch to do.\n  return [];\n}\n\n// These ids reach SQL downstream, so validate before use.\nconst UUID = /^[0-9a-fA-F-]{36}$/;\nfor (const s of SURVEYS) {\n  if (!UUID.test(String(s.project_id || ''))) {\n    throw new Error('Refusing to use a project_id that is not a UUID: ' + s.project_id);\n  }\n}\n\n// Backfill window in days.\nconst DAYS = parseInt($env.USERSNAP_BACKFILL_DAYS || '90', 10);\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name ?? null, token, since,\n} }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -560,7 +560,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT2').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM {{ $env.SNOWFLAKE_DATABASE }}.{{ $env.SNOWFLAKE_SCHEMA }}.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT2').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
       },
       "type": "n8n-nodes-base.snowflake",
       "typeVersion": 1,
