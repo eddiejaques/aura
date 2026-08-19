@@ -1,0 +1,1036 @@
+{
+  "name": "Feedback Pipeline - Backfill (generic)",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        3504,
+        1328
+      ],
+      "id": "115bd25c-cb01-489b-b447-19620c8320ef",
+      "name": "Run Backfill",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: same Usersnap surveys as the daily job ===\nconst SURVEYS = [\n  { project_id: 'REPLACE_PROJECT_ID_1', survey_name: 'Web feedback survey' }\n];\n\n// Backfill window (days). Edit here to change how far back to load.\nconst DAYS = 60;\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name, token, since,\n} }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        816
+      ],
+      "id": "6263a003-5e35-447b-ae22-a1071556a5fe",
+      "name": "Backfill Config + JWT"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Explicit cursor pagination: keep calling the API WHILE has_more is true.\n// (Replaces n8n's built-in HTTP pagination, which does not reliably advance the\n//  cursor for this POST /feedbacks/filter endpoint.)\n// Runs once for all items; input = one item per project from \"Backfill Config + JWT\".\nconst inputs = $input.all();\nconst out = [];\n\nfor (let i = 0; i < inputs.length; i++) {\n  const { project_id, token, since } = inputs[i].json;\n  const base = `https://platform.usersnap.com/v0.1/projects/${project_id}/feedbacks/filter`;\n  const body = {\n    query: [{ filter_type: 'created_at', operator: 'gte', value: since }],\n    order_by: { order_by_type: 'created_at', direction: 'asc' },\n  };\n\n  let after = null;\n  let hasMore = true;\n  let guard = 0;               // safety cap: 500 pages * 100 = 50k rows max\n\n  while (hasMore && guard < 500) {\n    guard++;\n\n    let url = `${base}?limit=100`;\n    if (after) url += `&after=${encodeURIComponent(after)}`;\n\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url,\n      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },\n      body,\n      json: true,\n    });\n\n    // Response may be array-wrapped [{status,data:{...}}] or a bare {status,data:{...}}.\n    const data = Array.isArray(res) ? (res[0] && res[0].data) : (res && res.data);\n    const feedbacks = (data && Array.isArray(data.feedbacks)) ? data.feedbacks : [];\n    for (const fb of feedbacks) out.push({ json: fb, pairedItem: { item: i } });\n\n    // has_more drives the next loop run; stop when false or no cursor.\n    hasMore = !!(data && data.has_more);\n    after = (data && data.next) ? data.next.after : null;\n    if (!after) hasMore = false;\n  }\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        816
+      ],
+      "id": "4f3e9cd6-fa71-4689-8dd6-85d4c4178cf6",
+      "name": "Fetch All Feedback (paginated)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten Usersnap feedbacks -> one item per feedback (PII-safe, generic).\n// survey_name is resolved by PROJECT_ID (robust; no pairedItem dependency).\nconst surveys = $('Backfill Config + JWT').all();\nconst byProject = {};\nfor (const s of surveys) {\n  const j = s.json || {};\n  if (j.project_id != null) byProject[String(j.project_id)] = (j.survey_name ?? null);\n}\n\nfunction extractFeedbacks(body) {\n  if (Array.isArray(body)) {\n    let acc = [];\n    for (const el of body) acc = acc.concat(extractFeedbacks(el));\n    return acc;\n  }\n  if (body && typeof body === 'object') {\n    if (Array.isArray(body.feedbacks)) return body.feedbacks;\n    if (body.data) return extractFeedbacks(body.data);\n    if (body.feedback_id) return [body];\n  }\n  return [];\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const list = extractFeedbacks(item.json);\n  for (const fb of list) {\n    const inputs = Array.isArray(fb.ordered_inputs) ? fb.ordered_inputs : [];\n\n    const ratingField = inputs.find(i => String(i.field_type || '').startsWith('rating'));\n    const rating = ratingField ? (ratingField.numeric_value ?? ratingField.value ?? null) : null;\n\n    const feedback_text = inputs\n      .map(i => (i.text_value != null ? String(i.text_value) : ''))\n      .filter(t => t.trim() !== '')\n      .join('\\n');\n\n    const questions = inputs.map(i => ({\n      field_id: i.field_id ?? null,\n      label: i.label ?? null,\n      field_type: i.field_type ?? null,\n      value: i.value ?? null,\n      order: i.order ?? null,\n    }));\n\n    const client = fb.client || {};\n    const customData = fb.custom_data || {};\n\n    // PII: never store email. Scrub it from the retained raw payload too.\n    const scrubbed = { ...fb };\n    delete scrubbed.email;\n\n    const projectId = fb.project_id ?? null;\n    out.push({ json: {\n      project_id: projectId,\n      survey_name: (projectId != null ? (byProject[String(projectId)] ?? null) : null),\n      feedback_id: String(fb.feedback_id ?? fb.id ?? ''),\n      feedback_number: fb.feedback_number ?? null,\n      public_link: fb.public_link ?? null,\n      created_at: fb.created_at || null,\n      updated_at: fb.updated_at || null,\n      status: fb.status_type || fb.status || null,\n      country: client.country_name ?? null,\n      city: client.city_name ?? null,\n      browser: client.browser_full_name ?? null,\n      os: client.browser_os ?? null,\n      page_url: client.url ?? null,\n      app_version: (customData && customData.version) ? customData.version : null,\n      rating,\n      feedback_text: feedback_text || null,\n      questions: JSON.stringify(questions),\n      labels: fb.labels ? JSON.stringify(fb.labels) : null,\n      raw_payload: JSON.stringify(scrubbed),\n    } });\n  }\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4176,
+        816
+      ],
+      "id": "6969b7a7-d6a8-40de-8f68-ec4d77880fac",
+      "name": "Flatten Usersnap Feedback"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        4400,
+        816
+      ],
+      "id": "ff55bda4-5abf-4fd5-b7d2-ddd875c29252",
+      "name": "Loop Over Items - Backfill"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You classify user feedback for YOUR_PRODUCT into EXACTLY ONE cluster. The feedback text may be in any language.\n\nYou MUST respond with ONLY a valid JSON object. No markdown, no code fences, no extra text:\n{\"category\": \"<one of the exact cluster names below>\"}\n\nAllowed cluster names (copy the exact string, including punctuation):\n- \"Technical Playback & Stability Issues\": playback problems, crashes, error pages, streaming or ad-loading failures, freezing, buffering, black screen.\n- \"Account & Subscription Management Difficulties\": registration/login, password reset, email confirmation, account deletion, failed subscription purchase or payment.\n- \"Advertising Experience Issues\": complaints about ad quantity, length, loudness, or mid-content ad interruptions.\n- \"Content Gaps, Quality & Relevance\": missing content, wrong order/numbering, content removed, misleading availability, weak or irrelevant catalogue.\n- \"Age Verification & Data Privacy Concerns\": age-rating verification problems, parental-control PIN, ID or passport requests, data-privacy objections.\n- \"Poor User Interface & Navigation (UX)\": cluttered/confusing navigation, broken search, watchlist/continue-watching issues, missing subtitle/audio settings, HD/quality gripes tied to the UI.\n- \"Value Perception & Monetization Critique\": paywalls despite \"free\", ads despite a paid tier, feeling forced/coerced to pay or create an account, overpriced.\n- \"General Dissatisfaction & Non-Specific Feedback\": non-specific anger or frustration with no concrete, actionable detail.\n- \"N/A\": uncategorizable - random letters, an email address, a URL, or gibberish, or empty text.\n- \"Positives Feedback\": general satisfaction or praise, even if very brief (e.g. \"good\", \"all good\", \"top\").\n- \"Lacking Customer Support\": difficulty reaching customer support, or support being unhelpful.\n\nRules:\n- Choose the single best-fit cluster.\n- If the text is empty, gibberish, only an email/URL, or otherwise meaningless, return \"N/A\".\n- Short positive answers like \"good\"/\"top\"/\"all good\" -> \"Positives Feedback\".",
+              "role": "model"
+            },
+            {
+              "content": "=Classify this YOUR_PRODUCT feedback into one cluster.\n\nRating (context, may be blank): {{ $json.rating }}\nFeedback text:\n{{ $json.feedback_text }}\n\nReturn only the JSON object."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "name": "Categorize Feedback",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        4624,
+        816
+      ],
+      "id": "3187594d-6698-4040-81f1-97dba49306b5",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rkZf2h4vgDxBEXfN",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = new Set([\"Technical Playback & Stability Issues\", \"Account & Subscription Management Difficulties\", \"Advertising Experience Issues\", \"Content Gaps, Quality & Relevance\", \"Age Verification & Data Privacy Concerns\", \"Poor User Interface & Navigation (UX)\", \"Value Perception & Monetization Critique\", \"General Dissatisfaction & Non-Specific Feedback\", \"N/A\", \"Positives Feedback\", \"Lacking Customer Support\"]);\n\nconst aiResponse = $input.first().json;\nconst feedback = $('Loop Over Items - Backfill').first().json;\n\nlet category = 'N/A';\ntry {\n  const content = aiResponse.content || aiResponse.message?.content;\n  let text = '';\n  if (content && content.parts && content.parts[0] && typeof content.parts[0].text === 'string') {\n    text = content.parts[0].text;\n  } else if (typeof content === 'string') {\n    text = content;\n  }\n  text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const parsed = JSON.parse(text);\n  if (parsed && typeof parsed.category === 'string' && ALLOWED.has(parsed.category.trim())) {\n    category = parsed.category.trim();\n  }\n} catch (e) {\n  category = 'N/A';\n}\n\nreturn [{ json: { ...feedback, category, categorized_at: new Date().toISOString() } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4976,
+        896
+      ],
+      "id": "1aeb69b3-c824-47b6-9e1d-6b13c9fc87f6",
+      "name": "Parse Category"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Done branch: enriched feedback items (category attached in the loop).\n// Emit final column order; this node is the holder Check Duplicates reads from.\nreturn $input.all().map(item => {\n  const d = item.json;\n  return { json: {\n    project_id: d.project_id ?? null,\n    survey_name: d.survey_name ?? null,\n    feedback_id: d.feedback_id ?? null,\n    feedback_number: d.feedback_number ?? null,\n    public_link: d.public_link ?? null,\n    created_at: d.created_at ?? null,\n    updated_at: d.updated_at ?? null,\n    status: d.status ?? null,\n    country: d.country ?? null,\n    city: d.city ?? null,\n    browser: d.browser ?? null,\n    os: d.os ?? null,\n    page_url: d.page_url ?? null,\n    app_version: d.app_version ?? null,\n    rating: d.rating ?? null,\n    feedback_text: d.feedback_text ?? null,\n    questions: d.questions ?? null,\n    category: d.category ?? 'N/A',\n    labels: d.labels ?? null,\n    raw_payload: d.raw_payload ?? null,\n    categorized_at: d.categorized_at ?? null,\n  }};\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4688,
+        624
+      ],
+      "id": "953f98a1-0621-4bd3-a416-b1cceadd50c4",
+      "name": "Build Usersnap Row"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        4976,
+        624
+      ],
+      "id": "12039404-b283-4da1-95d7-156c458f0ae6",
+      "name": "Execute a SQL query - Usersnap",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Existing feedback_ids already in Snowflake (whole table, no time window).\nconst existing = new Set($input.all().map(item => item.json.feedback_id));\n\n// Enriched rows from the build node.\nconst newRecords = $('Build Usersnap Row').all();\n\n// Keep only rows whose feedback_id is not already stored (also dedups the batch).\nconst toInsert = newRecords.filter(item => !existing.has(item.json.feedback_id));\n\nif (toInsert.length === 0) return [];\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5200,
+        624
+      ],
+      "id": "295075f0-5540-4a1e-af07-74e84f129625",
+      "name": "Check Duplicates - Usersnap",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3a624241-5996-4d0c-9dbf-45ca05991977",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5424,
+        624
+      ],
+      "id": "73b348c4-4439-45a3-b7cb-5c8771311f9c",
+      "name": "If - Usersnap"
+    },
+    {
+      "parameters": {
+        "table": "USERSNAP_FEEDBACK",
+        "columns": "project_id,survey_name,feedback_id,feedback_number,public_link,created_at,updated_at,status,country,city,browser,os,page_url,app_version,rating,feedback_text,questions,category,labels,raw_payload,categorized_at"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        5648,
+        624
+      ],
+      "id": "84bf567f-381b-4bf2-b190-e33c7dceca91",
+      "name": "Insert Usersnap Feedback",
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Usersnap Backfill (manual, one-off)\n\nLoads the last **30 days** into the SAME `ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK` table as the\ndaily job. Safe to run anytime — dedup is by `feedback_id`.\n\n1. Manual trigger\n2. Sign JWT + compute `since = now-30d` (edit DAYS in the config node)\n3. **Fetch All Feedback (paginated)** — a Code node that calls POST /feedbacks/filter in a\n   `while (has_more)` loop, advancing the `after` cursor, until all pages are fetched\n4. Flatten -> Gemini category -> SELECT DISTINCT feedback_id -> Insert new only\n\nExplicit loop replaces n8n's built-in pagination (unreliable on this POST endpoint).",
+        "height": 468,
+        "width": 380
+      },
+      "name": "Backfill Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6160,
+        848
+      ],
+      "id": "31c84e4d-3608-4e29-9af0-30d2b9557545"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: same Usersnap surveys as the daily job ===\nconst SURVEYS = [\n  { project_id:'REPLACE_PROJECT_ID_2', survey_name:'NPS email survey' }\n];\n\n// Backfill window (days). Edit here to change how far back to load.\nconst DAYS = 90;\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name, token, since,\n} }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        1328
+      ],
+      "id": "1dcc143b-1c27-4fb4-bdfa-d3b1b3f4322c",
+      "name": "Backfill Config + JWT1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Explicit cursor pagination: keep calling the API WHILE has_more is true.\n// (Replaces n8n's built-in HTTP pagination, which does not reliably advance the\n//  cursor for this POST /feedbacks/filter endpoint.)\n// Runs once for all items; input = one item per project from \"Backfill Config + JWT\".\nconst inputs = $input.all();\nconst out = [];\n\nfor (let i = 0; i < inputs.length; i++) {\n  const { project_id, token, since } = inputs[i].json;\n  const base = `https://platform.usersnap.com/v0.1/projects/${project_id}/feedbacks/filter`;\n  const body = {\n    query: [{ filter_type: 'created_at', operator: 'gte', value: since }],\n    order_by: { order_by_type: 'created_at', direction: 'asc' },\n  };\n\n  let after = null;\n  let hasMore = true;\n  let guard = 0;               // safety cap: 500 pages * 100 = 50k rows max\n\n  while (hasMore && guard < 500) {\n    guard++;\n\n    let url = `${base}?limit=100`;\n    if (after) url += `&after=${encodeURIComponent(after)}`;\n\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url,\n      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },\n      body,\n      json: true,\n    });\n\n    // Response may be array-wrapped [{status,data:{...}}] or a bare {status,data:{...}}.\n    const data = Array.isArray(res) ? (res[0] && res[0].data) : (res && res.data);\n    const feedbacks = (data && Array.isArray(data.feedbacks)) ? data.feedbacks : [];\n    for (const fb of feedbacks) out.push({ json: fb, pairedItem: { item: i } });\n\n    // has_more drives the next loop run; stop when false or no cursor.\n    hasMore = !!(data && data.has_more);\n    after = (data && data.next) ? data.next.after : null;\n    if (!after) hasMore = false;\n  }\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        1328
+      ],
+      "id": "88a1dd6a-5bef-405e-9ce7-c4a5f1879f5c",
+      "name": "Fetch All Feedback (paginated)1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten Usersnap feedbacks -> one item per feedback (PII-safe, generic).\n// survey_name is resolved by PROJECT_ID (robust; no pairedItem dependency).\nconst surveys = $('Backfill Config + JWT1').all();\nconst byProject = {};\nfor (const s of surveys) {\n  const j = s.json || {};\n  if (j.project_id != null) byProject[String(j.project_id)] = (j.survey_name ?? null);\n}\n\nfunction extractFeedbacks(body) {\n  if (Array.isArray(body)) {\n    let acc = [];\n    for (const el of body) acc = acc.concat(extractFeedbacks(el));\n    return acc;\n  }\n  if (body && typeof body === 'object') {\n    if (Array.isArray(body.feedbacks)) return body.feedbacks;\n    if (body.data) return extractFeedbacks(body.data);\n    if (body.feedback_id) return [body];\n  }\n  return [];\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const list = extractFeedbacks(item.json);\n  for (const fb of list) {\n    const inputs = Array.isArray(fb.ordered_inputs) ? fb.ordered_inputs : [];\n\n    const ratingField = inputs.find(i => String(i.field_type || '').startsWith('rating'));\n    const rating = ratingField ? (ratingField.numeric_value ?? ratingField.value ?? null) : null;\n\n    const feedback_text = inputs\n      .map(i => (i.text_value != null ? String(i.text_value) : ''))\n      .filter(t => t.trim() !== '')\n      .join('\\n');\n\n    const questions = inputs.map(i => ({\n      field_id: i.field_id ?? null,\n      label: i.label ?? null,\n      field_type: i.field_type ?? null,\n      value: i.value ?? null,\n      order: i.order ?? null,\n    }));\n\n    const client = fb.client || {};\n    const customData = fb.custom_data || {};\n\n    // PII: never store email. Scrub it from the retained raw payload too.\n    const scrubbed = { ...fb };\n    delete scrubbed.email;\n\n    const projectId = fb.project_id ?? null;\n    out.push({ json: {\n      project_id: projectId,\n      survey_name: (projectId != null ? (byProject[String(projectId)] ?? null) : null),\n      feedback_id: String(fb.feedback_id ?? fb.id ?? ''),\n      feedback_number: fb.feedback_number ?? null,\n      public_link: fb.public_link ?? null,\n      created_at: fb.created_at || null,\n      updated_at: fb.updated_at || null,\n      status: fb.status_type || fb.status || null,\n      country: client.country_name ?? null,\n      city: client.city_name ?? null,\n      browser: client.browser_full_name ?? null,\n      os: client.browser_os ?? null,\n      page_url: client.url ?? null,\n      app_version: (customData && customData.version) ? customData.version : null,\n      rating,\n      feedback_text: feedback_text || null,\n      questions: JSON.stringify(questions),\n      labels: fb.labels ? JSON.stringify(fb.labels) : null,\n      raw_payload: JSON.stringify(scrubbed),\n    } });\n  }\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4176,
+        1328
+      ],
+      "id": "90671d35-73ba-4862-affe-5fd1a87bb6b5",
+      "name": "Flatten Usersnap Feedback1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        4400,
+        1328
+      ],
+      "id": "113126b1-9071-418f-bdf8-f709239ebffd",
+      "name": "Loop Over Items - Backfill1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You classify user feedback for YOUR_PRODUCT into EXACTLY ONE cluster. The feedback text may be in any language.\n\nYou MUST respond with ONLY a valid JSON object. No markdown, no code fences, no extra text:\n{\"category\": \"<one of the exact cluster names below>\"}\n\nAllowed cluster names (copy the exact string, including punctuation):\n- \"Technical Playback & Stability Issues\": playback problems, crashes, error pages, streaming or ad-loading failures, freezing, buffering, black screen.\n- \"Account & Subscription Management Difficulties\": registration/login, password reset, email confirmation, account deletion, failed subscription purchase or payment.\n- \"Advertising Experience Issues\": complaints about ad quantity, length, loudness, or mid-content ad interruptions.\n- \"Content Gaps, Quality & Relevance\": missing content, wrong order/numbering, content removed, misleading availability, weak or irrelevant catalogue.\n- \"Age Verification & Data Privacy Concerns\": age-rating verification problems, parental-control PIN, ID or passport requests, data-privacy objections.\n- \"Poor User Interface & Navigation (UX)\": cluttered/confusing navigation, broken search, watchlist/continue-watching issues, missing subtitle/audio settings, HD/quality gripes tied to the UI.\n- \"Value Perception & Monetization Critique\": paywalls despite \"free\", ads despite a paid tier, feeling forced/coerced to pay or create an account, overpriced.\n- \"General Dissatisfaction & Non-Specific Feedback\": non-specific anger or frustration with no concrete, actionable detail.\n- \"N/A\": uncategorizable - random letters, an email address, a URL, or gibberish, or empty text.\n- \"Positives Feedback\": general satisfaction or praise, even if very brief (e.g. \"good\", \"all good\", \"top\").\n- \"Lacking Customer Support\": difficulty reaching customer support, or support being unhelpful.\n\nRules:\n- Choose the single best-fit cluster.\n- If the text is empty, gibberish, only an email/URL, or otherwise meaningless, return \"N/A\".\n- Short positive answers like \"good\"/\"top\"/\"all good\" -> \"Positives Feedback\".",
+              "role": "model"
+            },
+            {
+              "content": "=Classify this YOUR_PRODUCT feedback into one cluster.\n\nRating (context, may be blank): {{ $json.rating }}\nFeedback text:\n{{ $json.feedback_text }}\n\nReturn only the JSON object."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "name": "Categorize Feedback1",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        4624,
+        1328
+      ],
+      "id": "3fabfe13-5db4-4d10-912c-91c91883c973",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rkZf2h4vgDxBEXfN",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = new Set([\"Technical Playback & Stability Issues\", \"Account & Subscription Management Difficulties\", \"Advertising Experience Issues\", \"Content Gaps, Quality & Relevance\", \"Age Verification & Data Privacy Concerns\", \"Poor User Interface & Navigation (UX)\", \"Value Perception & Monetization Critique\", \"General Dissatisfaction & Non-Specific Feedback\", \"N/A\", \"Positives Feedback\", \"Lacking Customer Support\"]);\n\nconst aiResponse = $input.first().json;\nconst feedback = $('Loop Over Items - Backfill1').first().json;\n\nlet category = 'N/A';\ntry {\n  const content = aiResponse.content || aiResponse.message?.content;\n  let text = '';\n  if (content && content.parts && content.parts[0] && typeof content.parts[0].text === 'string') {\n    text = content.parts[0].text;\n  } else if (typeof content === 'string') {\n    text = content;\n  }\n  text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const parsed = JSON.parse(text);\n  if (parsed && typeof parsed.category === 'string' && ALLOWED.has(parsed.category.trim())) {\n    category = parsed.category.trim();\n  }\n} catch (e) {\n  category = 'N/A';\n}\n\nreturn [{ json: { ...feedback, category, categorized_at: new Date().toISOString() } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4976,
+        1392
+      ],
+      "id": "45cbf4a1-94fe-4852-bcf7-5e1b8d766508",
+      "name": "Parse Category1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Done branch: enriched feedback items (category attached in the loop).\n// Emit final column order; this node is the holder Check Duplicates reads from.\nreturn $input.all().map(item => {\n  const d = item.json;\n  return { json: {\n    project_id: d.project_id ?? null,\n    survey_name: d.survey_name ?? null,\n    feedback_id: d.feedback_id ?? null,\n    feedback_number: d.feedback_number ?? null,\n    public_link: d.public_link ?? null,\n    created_at: d.created_at ?? null,\n    updated_at: d.updated_at ?? null,\n    status: d.status ?? null,\n    country: d.country ?? null,\n    city: d.city ?? null,\n    browser: d.browser ?? null,\n    os: d.os ?? null,\n    page_url: d.page_url ?? null,\n    app_version: d.app_version ?? null,\n    rating: d.rating ?? null,\n    feedback_text: d.feedback_text ?? null,\n    questions: d.questions ?? null,\n    category: d.category ?? 'N/A',\n    labels: d.labels ?? null,\n    raw_payload: d.raw_payload ?? null,\n    categorized_at: d.categorized_at ?? null,\n  }};\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4688,
+        1136
+      ],
+      "id": "d44b7719-6bdd-43a3-b674-7faa115430f0",
+      "name": "Build Usersnap Row1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT1').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        4976,
+        1136
+      ],
+      "id": "f55a6925-c3ec-4941-b088-3e342281d6c8",
+      "name": "Execute a SQL query - Usersnap1",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Existing feedback_ids already in Snowflake (whole table, no time window).\nconst existing = new Set($input.all().map(item => item.json.feedback_id));\n\n// Enriched rows from the build node.\nconst newRecords = $('Build Usersnap Row1').all();\n\n// Keep only rows whose feedback_id is not already stored (also dedups the batch).\nconst toInsert = newRecords.filter(item => !existing.has(item.json.feedback_id));\n\nif (toInsert.length === 0) return [];\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5200,
+        1136
+      ],
+      "id": "5f52a346-4f44-4851-8035-673c83a48711",
+      "name": "Check Duplicates - Usersnap1",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3a624241-5996-4d0c-9dbf-45ca05991977",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5424,
+        1136
+      ],
+      "id": "942f080f-194e-476c-bc68-4d32e6d6087f",
+      "name": "If - Usersnap1"
+    },
+    {
+      "parameters": {
+        "table": "USERSNAP_FEEDBACK",
+        "columns": "project_id,survey_name,feedback_id,feedback_number,public_link,created_at,updated_at,status,country,city,browser,os,page_url,app_version,rating,feedback_text,questions,category,labels,raw_payload,categorized_at"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        5648,
+        1136
+      ],
+      "id": "c99ba6b7-3062-4282-9166-02671131165f",
+      "name": "Insert Usersnap Feedback1",
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: same Usersnap surveys as the daily job ===\nconst SURVEYS = [\n  { project_id:'REPLACE_PROJECT_ID_3', survey_name:'In-app feedback survey' }\n];\n\n// Backfill window (days). Edit here to change how far back to load.\nconst DAYS = 90;\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN and/or USERSNAP_JWT_KID');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nconst since = new Date(Date.now() - DAYS * 864e5).toISOString();\n\nreturn SURVEYS.map(s => ({ json: {\n  project_id: s.project_id, survey_name: s.survey_name, token, since,\n} }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        1824
+      ],
+      "id": "62d26faf-a4dc-46cb-97f6-5bfdce91d0fb",
+      "name": "Backfill Config + JWT2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Explicit cursor pagination: keep calling the API WHILE has_more is true.\n// (Replaces n8n's built-in HTTP pagination, which does not reliably advance the\n//  cursor for this POST /feedbacks/filter endpoint.)\n// Runs once for all items; input = one item per project from \"Backfill Config + JWT\".\nconst inputs = $input.all();\nconst out = [];\n\nfor (let i = 0; i < inputs.length; i++) {\n  const { project_id, token, since } = inputs[i].json;\n  const base = `https://platform.usersnap.com/v0.1/projects/${project_id}/feedbacks/filter`;\n  const body = {\n    query: [{ filter_type: 'created_at', operator: 'gte', value: since }],\n    order_by: { order_by_type: 'created_at', direction: 'asc' },\n  };\n\n  let after = null;\n  let hasMore = true;\n  let guard = 0;               // safety cap: 500 pages * 100 = 50k rows max\n\n  while (hasMore && guard < 500) {\n    guard++;\n\n    let url = `${base}?limit=100`;\n    if (after) url += `&after=${encodeURIComponent(after)}`;\n\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url,\n      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },\n      body,\n      json: true,\n    });\n\n    // Response may be array-wrapped [{status,data:{...}}] or a bare {status,data:{...}}.\n    const data = Array.isArray(res) ? (res[0] && res[0].data) : (res && res.data);\n    const feedbacks = (data && Array.isArray(data.feedbacks)) ? data.feedbacks : [];\n    for (const fb of feedbacks) out.push({ json: fb, pairedItem: { item: i } });\n\n    // has_more drives the next loop run; stop when false or no cursor.\n    hasMore = !!(data && data.has_more);\n    after = (data && data.next) ? data.next.after : null;\n    if (!after) hasMore = false;\n  }\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        1824
+      ],
+      "id": "82089de7-52b2-42be-a98b-438589c5dc34",
+      "name": "Fetch All Feedback (paginated)2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten Usersnap feedbacks -> one item per feedback (PII-safe, generic).\n// survey_name is resolved by PROJECT_ID (robust; no pairedItem dependency).\nconst surveys = $('Backfill Config + JWT2').all();\nconst byProject = {};\nfor (const s of surveys) {\n  const j = s.json || {};\n  if (j.project_id != null) byProject[String(j.project_id)] = (j.survey_name ?? null);\n}\n\nfunction extractFeedbacks(body) {\n  if (Array.isArray(body)) {\n    let acc = [];\n    for (const el of body) acc = acc.concat(extractFeedbacks(el));\n    return acc;\n  }\n  if (body && typeof body === 'object') {\n    if (Array.isArray(body.feedbacks)) return body.feedbacks;\n    if (body.data) return extractFeedbacks(body.data);\n    if (body.feedback_id) return [body];\n  }\n  return [];\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const list = extractFeedbacks(item.json);\n  for (const fb of list) {\n    const inputs = Array.isArray(fb.ordered_inputs) ? fb.ordered_inputs : [];\n\n    const ratingField = inputs.find(i => String(i.field_type || '').startsWith('rating'));\n    const rating = ratingField ? (ratingField.numeric_value ?? ratingField.value ?? null) : null;\n\n    const feedback_text = inputs\n      .map(i => (i.text_value != null ? String(i.text_value) : ''))\n      .filter(t => t.trim() !== '')\n      .join('\\n');\n\n    const questions = inputs.map(i => ({\n      field_id: i.field_id ?? null,\n      label: i.label ?? null,\n      field_type: i.field_type ?? null,\n      value: i.value ?? null,\n      order: i.order ?? null,\n    }));\n\n    const client = fb.client || {};\n    const customData = fb.custom_data || {};\n\n    // PII: never store email. Scrub it from the retained raw payload too.\n    const scrubbed = { ...fb };\n    delete scrubbed.email;\n\n    const projectId = fb.project_id ?? null;\n    out.push({ json: {\n      project_id: projectId,\n      survey_name: (projectId != null ? (byProject[String(projectId)] ?? null) : null),\n      feedback_id: String(fb.feedback_id ?? fb.id ?? ''),\n      feedback_number: fb.feedback_number ?? null,\n      public_link: fb.public_link ?? null,\n      created_at: fb.created_at || null,\n      updated_at: fb.updated_at || null,\n      status: fb.status_type || fb.status || null,\n      country: client.country_name ?? null,\n      city: client.city_name ?? null,\n      browser: client.browser_full_name ?? null,\n      os: client.browser_os ?? null,\n      page_url: client.url ?? null,\n      app_version: (customData && customData.version) ? customData.version : null,\n      rating,\n      feedback_text: feedback_text || null,\n      questions: JSON.stringify(questions),\n      labels: fb.labels ? JSON.stringify(fb.labels) : null,\n      raw_payload: JSON.stringify(scrubbed),\n    } });\n  }\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4176,
+        1824
+      ],
+      "id": "d24c5378-1ff5-4e9c-ab5d-52c4124f2a03",
+      "name": "Flatten Usersnap Feedback2"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        4400,
+        1824
+      ],
+      "id": "c01df607-fe99-401d-8cb0-1b069a7be02c",
+      "name": "Loop Over Items - Backfill2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You classify user feedback for YOUR_PRODUCT into EXACTLY ONE cluster. The feedback text may be in any language.\n\nYou MUST respond with ONLY a valid JSON object. No markdown, no code fences, no extra text:\n{\"category\": \"<one of the exact cluster names below>\"}\n\nAllowed cluster names (copy the exact string, including punctuation):\n- \"Technical Playback & Stability Issues\": playback problems, crashes, error pages, streaming or ad-loading failures, freezing, buffering, black screen.\n- \"Account & Subscription Management Difficulties\": registration/login, password reset, email confirmation, account deletion, failed subscription purchase or payment.\n- \"Advertising Experience Issues\": complaints about ad quantity, length, loudness, or mid-content ad interruptions.\n- \"Content Gaps, Quality & Relevance\": missing content, wrong order/numbering, content removed, misleading availability, weak or irrelevant catalogue.\n- \"Age Verification & Data Privacy Concerns\": age-rating verification problems, parental-control PIN, ID or passport requests, data-privacy objections.\n- \"Poor User Interface & Navigation (UX)\": cluttered/confusing navigation, broken search, watchlist/continue-watching issues, missing subtitle/audio settings, HD/quality gripes tied to the UI.\n- \"Value Perception & Monetization Critique\": paywalls despite \"free\", ads despite a paid tier, feeling forced/coerced to pay or create an account, overpriced.\n- \"General Dissatisfaction & Non-Specific Feedback\": non-specific anger or frustration with no concrete, actionable detail.\n- \"N/A\": uncategorizable - random letters, an email address, a URL, or gibberish, or empty text.\n- \"Positives Feedback\": general satisfaction or praise, even if very brief (e.g. \"good\", \"all good\", \"top\").\n- \"Lacking Customer Support\": difficulty reaching customer support, or support being unhelpful.\n\nRules:\n- Choose the single best-fit cluster.\n- If the text is empty, gibberish, only an email/URL, or otherwise meaningless, return \"N/A\".\n- Short positive answers like \"good\"/\"top\"/\"all good\" -> \"Positives Feedback\".",
+              "role": "model"
+            },
+            {
+              "content": "=Classify this YOUR_PRODUCT feedback into one cluster.\n\nRating (context, may be blank): {{ $json.rating }}\nFeedback text:\n{{ $json.feedback_text }}\n\nReturn only the JSON object."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "name": "Categorize Feedback2",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        4624,
+        1824
+      ],
+      "id": "8c606aa5-2d88-4cde-b391-2bf2d0e14aa0",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rkZf2h4vgDxBEXfN",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = new Set([\"Technical Playback & Stability Issues\", \"Account & Subscription Management Difficulties\", \"Advertising Experience Issues\", \"Content Gaps, Quality & Relevance\", \"Age Verification & Data Privacy Concerns\", \"Poor User Interface & Navigation (UX)\", \"Value Perception & Monetization Critique\", \"General Dissatisfaction & Non-Specific Feedback\", \"N/A\", \"Positives Feedback\", \"Lacking Customer Support\"]);\n\nconst aiResponse = $input.first().json;\nconst feedback = $('Loop Over Items - Backfill2').first().json;\n\nlet category = 'N/A';\ntry {\n  const content = aiResponse.content || aiResponse.message?.content;\n  let text = '';\n  if (content && content.parts && content.parts[0] && typeof content.parts[0].text === 'string') {\n    text = content.parts[0].text;\n  } else if (typeof content === 'string') {\n    text = content;\n  }\n  text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const parsed = JSON.parse(text);\n  if (parsed && typeof parsed.category === 'string' && ALLOWED.has(parsed.category.trim())) {\n    category = parsed.category.trim();\n  }\n} catch (e) {\n  category = 'N/A';\n}\n\nreturn [{ json: { ...feedback, category, categorized_at: new Date().toISOString() } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4976,
+        1904
+      ],
+      "id": "c63c3a1e-65a3-4423-aa32-cfafefd2fee0",
+      "name": "Parse Category2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Done branch: enriched feedback items (category attached in the loop).\n// Emit final column order; this node is the holder Check Duplicates reads from.\nreturn $input.all().map(item => {\n  const d = item.json;\n  return { json: {\n    project_id: d.project_id ?? null,\n    survey_name: d.survey_name ?? null,\n    feedback_id: d.feedback_id ?? null,\n    feedback_number: d.feedback_number ?? null,\n    public_link: d.public_link ?? null,\n    created_at: d.created_at ?? null,\n    updated_at: d.updated_at ?? null,\n    status: d.status ?? null,\n    country: d.country ?? null,\n    city: d.city ?? null,\n    browser: d.browser ?? null,\n    os: d.os ?? null,\n    page_url: d.page_url ?? null,\n    app_version: d.app_version ?? null,\n    rating: d.rating ?? null,\n    feedback_text: d.feedback_text ?? null,\n    questions: d.questions ?? null,\n    category: d.category ?? 'N/A',\n    labels: d.labels ?? null,\n    raw_payload: d.raw_payload ?? null,\n    categorized_at: d.categorized_at ?? null,\n  }};\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4688,
+        1632
+      ],
+      "id": "d0c9c217-c435-4553-8299-7c9ed4fb5a49",
+      "name": "Build Usersnap Row2"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Backfill Config + JWT2').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        4976,
+        1632
+      ],
+      "id": "4558c5c2-6fe9-4d15-879a-3663bb1cf864",
+      "name": "Execute a SQL query - Usersnap2",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Existing feedback_ids already in Snowflake (whole table, no time window).\nconst existing = new Set($input.all().map(item => item.json.feedback_id));\n\n// Enriched rows from the build node.\nconst newRecords = $('Build Usersnap Row2').all();\n\n// Keep only rows whose feedback_id is not already stored (also dedups the batch).\nconst toInsert = newRecords.filter(item => !existing.has(item.json.feedback_id));\n\nif (toInsert.length === 0) return [];\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5200,
+        1632
+      ],
+      "id": "f5191d13-77f5-44f4-a0a1-1883b0e969d2",
+      "name": "Check Duplicates - Usersnap2",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3a624241-5996-4d0c-9dbf-45ca05991977",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5424,
+        1632
+      ],
+      "id": "495c3ee6-fa0c-424b-9b26-ffb794320a05",
+      "name": "If - Usersnap2"
+    },
+    {
+      "parameters": {
+        "table": "USERSNAP_FEEDBACK",
+        "columns": "project_id,survey_name,feedback_id,feedback_number,public_link,created_at,updated_at,status,country,city,browser,os,page_url,app_version,rating,feedback_text,questions,category,labels,raw_payload,categorized_at"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        5648,
+        1632
+      ],
+      "id": "21d1dffa-1862-4eab-8102-8f8f287b68f5",
+      "name": "Insert Usersnap Feedback2",
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Run Backfill": {
+      "main": [
+        [
+          {
+            "node": "Backfill Config + JWT",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Backfill Config + JWT1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Backfill Config + JWT2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backfill Config + JWT": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Feedback (paginated)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Usersnap Feedback": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Backfill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items - Backfill": {
+      "main": [
+        [
+          {
+            "node": "Build Usersnap Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Categorize Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categorize Feedback": {
+      "main": [
+        [
+          {
+            "node": "Parse Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Category": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Backfill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Usersnap Row": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "If - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "Insert Usersnap Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Feedback (paginated)": {
+      "main": [
+        [
+          {
+            "node": "Flatten Usersnap Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backfill Config + JWT1": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Feedback (paginated)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Feedback (paginated)1": {
+      "main": [
+        [
+          {
+            "node": "Flatten Usersnap Feedback1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Usersnap Feedback1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Backfill1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items - Backfill1": {
+      "main": [
+        [
+          {
+            "node": "Build Usersnap Row1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Categorize Feedback1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categorize Feedback1": {
+      "main": [
+        [
+          {
+            "node": "Parse Category1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Category1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Backfill1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Usersnap Row1": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - Usersnap1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - Usersnap1": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates - Usersnap1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates - Usersnap1": {
+      "main": [
+        [
+          {
+            "node": "If - Usersnap1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Usersnap1": {
+      "main": [
+        [
+          {
+            "node": "Insert Usersnap Feedback1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backfill Config + JWT2": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Feedback (paginated)2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Feedback (paginated)2": {
+      "main": [
+        [
+          {
+            "node": "Flatten Usersnap Feedback2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Usersnap Feedback2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Backfill2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items - Backfill2": {
+      "main": [
+        [
+          {
+            "node": "Build Usersnap Row2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Categorize Feedback2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categorize Feedback2": {
+      "main": [
+        [
+          {
+            "node": "Parse Category2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Category2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Backfill2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Usersnap Row2": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - Usersnap2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - Usersnap2": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates - Usersnap2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates - Usersnap2": {
+      "main": [
+        [
+          {
+            "node": "If - Usersnap2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Usersnap2": {
+      "main": [
+        [
+          {
+            "node": "Insert Usersnap Feedback2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "e8a8d7b7-0135-458d-a53e-7f0cb283b0b6",
+  "meta": {
+    "instanceId": "ad94278223ae7b7b51934ee27715d6048507a39638231babc14f248043bfcc98"
+  },
+  "id": "babbc3a09ece4af4",
+  "tags": []
+}

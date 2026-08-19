@@ -1,0 +1,1260 @@
+{
+  "name": "Feedback Pipeline - Daily (generic)",
+  "nodes": [
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are an expert customer service analyst specializing in app store reviews for YOUR_PRODUCT. Reviews may be written in any language. Your task is to analyze reviews and provide structured insights.\n\nYou MUST respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.\n\nRequired JSON structure:\n{\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"category\": \"<exactly one of the 11 cluster names below>\",\n  \"key_issues\": [\"specific issue 1\", \"specific issue 2\"],\n  \"urgency\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"summary\": \"one clear sentence summarizing the core feedback\",\n  \"response_tone\": \"apologetic\" | \"grateful\" | \"helpful\" | \"empathetic\" | \"professional\",\n  \"action_required\": true | false,\n  \"customer_emotion\": \"frustrated\" | \"angry\" | \"satisfied\" | \"disappointed\" | \"happy\" | \"neutral\"\n}\n\ncategory MUST be exactly one of these 11 cluster names (copy the exact string, including punctuation):\n- \"Technical Playback & Stability Issues\": playback problems, crashes, error pages, streaming or ad-loading failures, freezing, buffering, black screen.\n- \"Account & Subscription Management Difficulties\": registration/login, password reset, email confirmation, account deletion, failed subscription purchase or payment.\n- \"Advertising Experience Issues\": complaints about ad quantity, length, loudness, or mid-content ad interruptions.\n- \"Content Gaps, Quality & Relevance\": missing content, wrong order/numbering, content removed, misleading availability, weak or irrelevant catalogue.\n- \"Age Verification & Data Privacy Concerns\": age-rating verification problems, parental-control PIN, ID or passport requests, data-privacy objections.\n- \"Poor User Interface & Navigation (UX)\": cluttered/confusing navigation, broken search, watchlist/continue-watching issues, missing subtitle/audio settings, HD/quality gripes tied to the UI.\n- \"Value Perception & Monetization Critique\": paywalls despite \"free\", ads despite a paid tier, feeling forced/coerced to pay or create an account, overpriced.\n- \"General Dissatisfaction & Non-Specific Feedback\": non-specific anger or frustration with no concrete, actionable detail.\n- \"N/A\": uncategorizable - random letters, an email address, a URL, or gibberish, or empty text.\n- \"Positives Feedback\": general satisfaction or praise, even if very brief (e.g. \"good\", \"all good\", \"top\").\n- \"Lacking Customer Support\": difficulty reaching customer support, or support being unhelpful.\n\nGuidelines:\n- sentiment: Overall tone of the review\n- category: The single best-fit cluster from the list above. If the text is empty, gibberish, only an email/URL, or otherwise meaningless, use \"N/A\". Short positive reviews (e.g. \"good\", \"top\") -> \"Positives Feedback\".\n- key_issues: Extract 1-3 specific problems or points mentioned (keep this even when a cluster is chosen)\n- urgency: Based on severity and customer emotion\n- summary: Concise, factual summary\n- response_tone: Best tone for responding\n- action_required: Does this need immediate follow-up?\n- customer_emotion: Detected emotional state",
+              "role": "model"
+            },
+            {
+              "content": "=Analyze this App Store review:\n\n**Title:** {{ $json.title }}\n**Rating:** {{ $json.rating }}/5 stars\n**Review Text:** {{ $json.body }}\n**Territory:** {{ $json.territory }}\n\nReturn ONLY the JSON object described in the system message. `category` must be exactly one of the 11 cluster names (verbatim string)."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "name": "Analyze Sentiment - OpenAI1",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        512
+      ],
+      "id": "09429705-cd68-4bc1-bb88-9ea6aeb9c3d0",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rkZf2h4vgDxBEXfN",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract just the data array from the wrapper\nconst input = $input.first().json;\n\n// Handle if input is array or object\nconst dataArray = Array.isArray(input) ? input[0].data : input.data;\n\n// Return each review as a separate item\nreturn dataArray.map(review => ({\n  json: {\n    reviewId: review.id,\n    type: review.type,\n    rating: review.attributes.rating,\n    title: review.attributes.title,\n    body: review.attributes.body,\n    reviewerNickname: review.attributes.reviewerNickname,\n    createdDate: review.attributes.createdDate,\n    territory: review.attributes.territory,\n    hasResponse: review.relationships?.response?.data !== null,\n    rawData: review\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        592
+      ],
+      "id": "e7fbfc9e-0a36-4772-a899-ce1e3342f179",
+      "name": "Parse Sentiment3"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        336,
+        592
+      ],
+      "id": "ced721ab-1ab2-470d-985e-115b3ff98ee5",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI sentiment analysis response\nconst aiResponse = $input.first().json;\nconst loopData = $('Loop Over Items').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  // Remove markdown formatting if present\n  // Gemini returns the text under content.parts[0].text\n  const contentText = content.parts[0].text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const analysis = JSON.parse(contentText);\n  const ALLOWED = new Set([\"Technical Playback & Stability Issues\", \"Account & Subscription Management Difficulties\", \"Advertising Experience Issues\", \"Content Gaps, Quality & Relevance\", \"Age Verification & Data Privacy Concerns\", \"Poor User Interface & Navigation (UX)\", \"Value Perception & Monetization Critique\", \"General Dissatisfaction & Non-Specific Feedback\", \"N/A\", \"Positives Feedback\", \"Lacking Customer Support\"]);\n  const category = (analysis && typeof analysis.category === 'string' && ALLOWED.has(analysis.category.trim())) ? analysis.category.trim() : 'N/A';\n\n  \n  // Return complete data structure with review info and analysis\n  return [{\n    json: {\n      review_id: loopData.reviewId,\n      review_title: loopData.title,\n      review_body: loopData.body,\n      review_rating: loopData.rating,\n      review_date: loopData.createdDate,\n      reviewer_nickname: loopData.reviewerNickname,\n      territory: loopData.territory,\n      sentiment: analysis.sentiment,\n      category: category,\n      key_issues: analysis.key_issues,\n      urgency: analysis.urgency,\n      summary: analysis.summary,\n      response_tone: analysis.response_tone,\n      action_required: analysis.action_required,\n      customer_emotion: analysis.customer_emotion\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse sentiment analysis',\n      details: error.message,\n      raw_response: aiResponse,\n      loop_data: loopData\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        656
+      ],
+      "id": "dad31cbb-c8f1-47a8-bb2d-fa8143b115fb",
+      "name": "Parse Sentiment1"
+    },
+    {
+      "parameters": {
+        "content": "## Apple App Store Review Processing\n\nThis workflow:\n1. Runs every 6 hours\n2. Generates JWT token for Apple API\n3. Fetches latest 5 reviews\n4. Splits review data array\n5. Analyzes sentiment with AI\n6. Parses sentiment JSON\n7. Generates suggested responses\n8. Parses response output\n\n**Data Flow:**\n- Split Out: Separates review array into individual items\n- Parse Sentiment: Extracts JSON from AI response and combines with review data\n- Parse Response: Extracts final response and creates complete output\n\n**Setup Required:**\n- Credentials: OpenAI API\n- JWT credentials in Code node",
+        "height": 592,
+        "width": 300
+      },
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "8eb4c070-b997-4436-a6b1-01047c22a7c3"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are an expert customer service analyst specializing in Google Play Store reviews for YOUR_PRODUCT. Reviews may be written in any language. Your task is to analyze reviews and provide structured insights.\n\nYou MUST respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.\n\nRequired JSON structure:\n{\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"category\": \"<exactly one of the 11 cluster names below>\",\n  \"key_issues\": [\"specific issue 1\", \"specific issue 2\"],\n  \"urgency\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"summary\": \"one clear sentence summarizing the core feedback\",\n  \"response_tone\": \"apologetic\" | \"grateful\" | \"helpful\" | \"empathetic\" | \"professional\",\n  \"action_required\": true | false,\n  \"customer_emotion\": \"frustrated\" | \"angry\" | \"satisfied\" | \"disappointed\" | \"happy\" | \"neutral\",\n  \"device_context\": \"brief note on device/OS relevance to the issue\"\n}\n\ncategory MUST be exactly one of these 11 cluster names (copy the exact string, including punctuation):\n- \"Technical Playback & Stability Issues\": playback problems, crashes, error pages, streaming or ad-loading failures, freezing, buffering, black screen.\n- \"Account & Subscription Management Difficulties\": registration/login, password reset, email confirmation, account deletion, failed subscription purchase or payment.\n- \"Advertising Experience Issues\": complaints about ad quantity, length, loudness, or mid-content ad interruptions.\n- \"Content Gaps, Quality & Relevance\": missing content, wrong order/numbering, content removed, misleading availability, weak or irrelevant catalogue.\n- \"Age Verification & Data Privacy Concerns\": age-rating verification problems, parental-control PIN, ID or passport requests, data-privacy objections.\n- \"Poor User Interface & Navigation (UX)\": cluttered/confusing navigation, broken search, watchlist/continue-watching issues, missing subtitle/audio settings, HD/quality gripes tied to the UI.\n- \"Value Perception & Monetization Critique\": paywalls despite \"free\", ads despite a paid tier, feeling forced/coerced to pay or create an account, overpriced.\n- \"General Dissatisfaction & Non-Specific Feedback\": non-specific anger or frustration with no concrete, actionable detail.\n- \"N/A\": uncategorizable - random letters, an email address, a URL, or gibberish, or empty text.\n- \"Positives Feedback\": general satisfaction or praise, even if very brief (e.g. \"good\", \"all good\", \"top\").\n- \"Lacking Customer Support\": difficulty reaching customer support, or support being unhelpful.\n\nGuidelines:\n- sentiment: Overall tone of the review\n- category: The single best-fit cluster from the list above. Device-specific malfunctions usually fall under \"Technical Playback & Stability Issues\" (note the device in device_context). If the text is empty, gibberish, only an email/URL, or otherwise meaningless, use \"N/A\". Short positive reviews (e.g. \"good\", \"top\") -> \"Positives Feedback\".\n- key_issues: Extract 1-3 specific problems or points mentioned (keep this even when a cluster is chosen)\n- urgency: Based on severity, customer emotion, and potential impact\n- summary: Concise, factual summary\n- response_tone: Best tone for responding\n- action_required: Does this need immediate follow-up?\n- customer_emotion: Detected emotional state\n- device_context: Note if device/Android version may be relevant",
+              "role": "model"
+            },
+            {
+              "content": "=Analyze this Google Play Store review:\n\n**Rating:** {{ $json.starRating }}/5 stars\n**Review Text:** {{ $json.text }}\n**Device:** {{ $json.device }}\n**Android Version:** {{ $json.androidOsVersion }}\n**App Version:** {{ $json.appVersionCode }}\n**Reviewer:** {{ $json.authorName }}\n\nProvide your analysis as a JSON object only."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        2928,
+        416
+      ],
+      "id": "155676db-8264-45b6-8216-c0e88549b4c6",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rkZf2h4vgDxBEXfN",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI sentiment analysis response\nconst aiResponse = $input.first().json;\nconst loopData = $('Loop Over Items2').first().json;\n\ntry {\n  let content = aiResponse.content || aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content;\n  \n  if (!content) {\n    throw new Error('No content found in OpenAI response');\n  }\n  \n  // Remove markdown formatting if present\n  contentText = content.parts[0].text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  const analysis = JSON.parse(contentText);\n  const ALLOWED = new Set([\"Technical Playback & Stability Issues\", \"Account & Subscription Management Difficulties\", \"Advertising Experience Issues\", \"Content Gaps, Quality & Relevance\", \"Age Verification & Data Privacy Concerns\", \"Poor User Interface & Navigation (UX)\", \"Value Perception & Monetization Critique\", \"General Dissatisfaction & Non-Specific Feedback\", \"N/A\", \"Positives Feedback\", \"Lacking Customer Support\"]);\n  const category = (analysis && typeof analysis.category === 'string' && ALLOWED.has(analysis.category.trim())) ? analysis.category.trim() : 'N/A';\n\n  \n  // Return complete data structure with review info and analysis\n  return [{\n    json: {\n      review_id: loopData.reviewId,\n      author_name: loopData.authorName,\n      rating: loopData.rating,\n      review_text: loopData.text,\n      original_text: loopData.originalText,\n      device: loopData.device,\n      android_version: loopData.androidOsVersion,\n      app_version: loopData.appVersionCode,\n      last_modified: loopData.lastModified,\n      sentiment: analysis.sentiment,\n      category: category,\n      key_issues: analysis.key_issues,\n      urgency: analysis.urgency,\n      summary: analysis.summary,\n      response_tone: analysis.response_tone,\n      action_required: analysis.action_required,\n      customer_emotion: analysis.customer_emotion,\n      device_context: analysis.device_context\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      error: 'Failed to parse sentiment analysis',\n      details: error.message,\n      raw_response: aiResponse,\n      loop_data: loopData\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3280,
+        496
+      ],
+      "id": "41433350-0304-4741-9999-40a6df4023d7",
+      "name": "Parse Sentiment2"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2704,
+        320
+      ],
+      "id": "17eb4061-f759-40bc-a1d4-77dca4143502",
+      "name": "Loop Over Items2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            },
+            {
+              "name": "assertion",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2032,
+        320
+      ],
+      "id": "de68d4ff-3a18-4d3c-a0d7-1707400814b2",
+      "name": "HTTP Request2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.first().json.reviews || [];\n\nreturn reviews.map(review => ({\n  json: {\n    reviewId: review.reviewId,\n    authorName: review.authorName,\n    starRating: review.comments[0]?.userComment?.starRating,\n    text: review.comments[0]?.userComment?.text,\n    lastModified: review.comments[0]?.userComment?.lastModified,\n    device: review.comments[0]?.userComment?.device,\n    androidOsVersion: review.comments[0]?.userComment?.androidOsVersion,\n    appVersionCode: review.comments[0]?.userComment?.appVersionCode,\n    reviewerLanguage: review.comments[0]?.userComment?.reviewerLanguage\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        320
+      ],
+      "id": "60f07f8e-6a2a-4f5b-a2ae-05618566c7fc",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "url": "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.example.yourapp/reviews?maxResults=10",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2256,
+        320
+      ],
+      "id": "9e12d586-3c4f-43cb-a882-43a3538eb6d1",
+      "name": "HTTP Request3"
+    },
+    {
+      "parameters": {
+        "content": "Build a gemini based pipeline"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1104,
+        704
+      ],
+      "typeVersion": 1,
+      "id": "01005cfc-abe5-4c27-864c-5c6e3d9d029e",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Stable, PII-free id: hash the review's own timestamp + platform id + reviewer name.\n// The reviewer name is used only to build the hash and is NOT stored.\nreturn $input.all().map(item => {\n  const d = item.json;\n  const id = crypto\n    .createHash('sha256')\n    .update(`${d.review_date}|${d.review_id}|${d.reviewer_nickname ?? ''}`)\n    .digest('hex')\n    .substring(0, 32);\n\n  const key_issues = (d.key_issues && typeof d.key_issues === 'object')\n    ? JSON.stringify(d.key_issues)\n    : (d.key_issues ?? null);\n\n  return { json: {\n    id,\n    platform: 'apple_app_store',\n    review_id: d.review_id,\n    review_title: d.review_title ?? null,\n    review_body: d.review_body ?? null,\n    original_text: null,\n    rating: d.review_rating ?? null,\n    review_date: d.review_date ?? null,\n    territory: d.territory ?? null,\n    device: null,\n    os_version: null,\n    app_version: null,\n    sentiment: d.sentiment ?? null,\n    category: d.category ?? null,\n    key_issues,\n    urgency: d.urgency ?? null,\n    summary: d.summary ?? null,\n    response_tone: d.response_tone ?? null,\n    action_required: d.action_required ?? null,\n    customer_emotion: d.customer_emotion ?? null,\n    device_context: null,\n    analyzed_at: new Date().toISOString()\n  }};\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        320
+      ],
+      "id": "54d1ad21-2906-4574-bfa8-4c0f5e08cd71",
+      "name": "Add Unique ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Stable, PII-free id: hash the review's own timestamp + platform id + reviewer name.\n// The reviewer name is used only to build the hash and is NOT stored.\nreturn $input.all().map(item => {\n  const d = item.json;\n\n  // Convert last_modified {seconds, nanos} → ISO timestamp string\n  const seconds = parseInt(d.last_modified.seconds);\n  const nanos = d.last_modified.nanos || 0;\n  const review_date = new Date(seconds * 1000 + nanos / 1000000).toISOString();\n\n  const id = crypto\n    .createHash('sha256')\n    .update(`${review_date}|${d.review_id}|${d.author_name ?? ''}`)\n    .digest('hex')\n    .substring(0, 32);\n\n  const key_issues = (d.key_issues && typeof d.key_issues === 'object')\n    ? JSON.stringify(d.key_issues)\n    : (d.key_issues ?? null);\n\n  return { json: {\n    id,\n    platform: 'google_play',\n    review_id: d.review_id,\n    review_title: null,\n    review_body: d.review_text ?? null,\n    original_text: d.original_text ?? null,\n    rating: d.rating ?? null,\n    review_date,\n    territory: null,\n    device: d.device ?? null,\n    os_version: d.android_version ?? null,\n    app_version: d.app_version ?? null,\n    sentiment: d.sentiment ?? null,\n    category: d.category ?? null,\n    key_issues,\n    urgency: d.urgency ?? null,\n    summary: d.summary ?? null,\n    response_tone: d.response_tone ?? null,\n    action_required: d.action_required ?? null,\n    customer_emotion: d.customer_emotion ?? null,\n    device_context: d.device_context ?? null,\n    analyzed_at: new Date().toISOString()\n  }};\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2992,
+        224
+      ],
+      "id": "5b43d8b8-f1d7-499b-ab0b-26d24066a939",
+      "name": "Add Unique ID - Android"
+    },
+    {
+      "parameters": {
+        "table": "APP_STORE_REVIEWS",
+        "columns": "id,platform,review_id,review_title,review_body,original_text,rating,review_date,territory,device,os_version,app_version,sentiment,category,key_issues,urgency,summary,response_tone,action_required,customer_emotion,device_context,analyzed_at"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        3968,
+        208
+      ],
+      "id": "b721fa3c-cdc2-4c5b-8b23-d85cbb8797fa",
+      "name": "Insert rows in a table - Android",
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT id AS \"id\" FROM ANALYTICS.FEEDBACK.APP_STORE_REVIEWS WHERE platform = 'apple_app_store'"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        912,
+        320
+      ],
+      "id": "f6586cb5-d131-4a10-b6b8-1563e2012bff",
+      "name": "Execute a SQL query - iOS",
+      "alwaysOutputData": true,
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Existing stable ids already in Snowflake (whole set for this platform, no time window)\nconst existingIds = new Set(\n  $input.all().map(item => item.json.id)\n);\n\n// The transformed records from the Add Unique ID node\nconst newRecords = $('Add Unique ID').all();\n\n// Keep only rows whose stable id is not already stored (also dedups within the batch)\nconst toInsert = newRecords.filter(item => !existingIds.has(item.json.id));\n\nif (toInsert.length === 0) {\n  // Nothing new -> downstream insert has nothing to process\n  return [];\n}\n\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        320
+      ],
+      "id": "e0ea1cb2-3ab2-4340-9355-ef81cda4f1ca",
+      "name": "Check Duplicates",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT id AS \"id\" FROM ANALYTICS.FEEDBACK.APP_STORE_REVIEWS WHERE platform = 'google_play'"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        3280,
+        224
+      ],
+      "id": "97835769-054f-4e87-9afe-4966a7adfe18",
+      "name": "Execute a SQL query - Android",
+      "alwaysOutputData": true,
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Existing stable ids already in Snowflake (whole set for this platform, no time window)\nconst existingIds = new Set(\n  $input.all().map(item => item.json.id)\n);\n\n// The transformed records from the Add Unique ID - Android node\nconst newRecords = $('Add Unique ID - Android').all();\n\n// Keep only rows whose stable id is not already stored (also dedups within the batch)\nconst toInsert = newRecords.filter(item => !existingIds.has(item.json.id));\n\nif (toInsert.length === 0) {\n  // Nothing new -> downstream insert has nothing to process\n  return [];\n}\n\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3504,
+        224
+      ],
+      "id": "e039e5e8-d731-465e-a2c9-10571030d7e0",
+      "name": "Check Duplicates-Android",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "useJson": true,
+        "claimsJson": "={\n    \"iss\": \"{{ $env.GCP_SA_EMAIL }}\",\n    \"scope\": \"https://www.googleapis.com/auth/androidpublisher\",\n    \"aud\": \"https://oauth2.googleapis.com/token\",\n    \"exp\": {{ Math.floor(Date.now() / 1000) + 3600 }},\n    \"iat\": {{ Math.floor(Date.now() / 1000) }}\n  }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jwt",
+      "typeVersion": 1,
+      "position": [
+        1808,
+        320
+      ],
+      "id": "55d441e3-3220-40fe-a94b-e7b1f0c2395d",
+      "name": "Android - JWT - Begins",
+      "credentials": {
+        "jwtAuth": {
+          "id": "KvLxwjUywatV7u3h",
+          "name": "JWT Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// Load credentials from n8n environment variables\nconst issuerID = $env.APPLE_ISSUER_ID;\nconst keyID = $env.APPLE_KEY_ID;\nconst privateKey = $env.APPLE_PRIVATE_KEY;\n\n// Validate that all required environment variables are set\nif (!issuerID || !keyID || !privateKey) {\n  throw new Error('Missing required environment variables: APPLE_ISSUER_ID, APPLE_KEY_ID, or APPLE_PRIVATE_KEY');\n}\n\nconst token = jwt.sign(\n  {\n    iss: issuerID,\n    exp: Math.floor(Date.now() / 1000) + (20 * 60),\n    aud: 'appstoreconnect-v1'\n  },\n  privateKey,\n  {\n    algorithm: 'ES256',\n    header: {\n      alg: 'ES256',\n      kid: keyID,\n      typ: 'JWT'\n    }\n  }\n);\n\nreturn [{ json: { token } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        592
+      ],
+      "id": "8954c1eb-df44-4a69-8101-3ac18feecaaa",
+      "name": "Create JWT"
+    },
+    {
+      "parameters": {
+        "url": "https://api.appstoreconnect.apple.com/v1/apps/YOUR_APPLE_APP_ID/customerReviews",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "sort",
+              "value": "-createdDate"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "name": "Fetch IOS Reviews VIA API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -112,
+        592
+      ],
+      "id": "1bccff1d-7ed4-4bf4-b5c3-ad4815fb6565",
+      "notes": "Fetches latest 5 reviews from App Store Connect API"
+    },
+    {
+      "parameters": {
+        "table": "APP_STORE_REVIEWS",
+        "columns": "id,platform,review_id,review_title,review_body,original_text,rating,review_date,territory,device,os_version,app_version,sentiment,category,key_issues,urgency,summary,response_tone,action_required,customer_emotion,device_context,analyzed_at"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        256
+      ],
+      "id": "21095e10-22da-4c98-8149-787b13254ed8",
+      "name": "Insert rows in iOS Table",
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "dcd952c3-1d18-4f38-afa4-5d3ef36e55d2",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1360,
+        320
+      ],
+      "id": "e9423de4-d3d2-409b-8d95-5b8ee6d5d451",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f064f6d5-720d-485f-bf0e-b6142fc84b62",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3728,
+        224
+      ],
+      "id": "df7a6246-fa51-4439-9593-867061439597",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM ANALYTICS.FEEDBACK.APP_STORE_REVIEWS WHERE platform = 'google_play' LIMIT 1000"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        4176,
+        208
+      ],
+      "id": "cc72a9ed-dfcf-4913-aecb-15edb1252d8b",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtMinute": 40
+            }
+          ]
+        }
+      },
+      "name": "Schedule - Usersnap",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        1072
+      ],
+      "id": "2d51f253-91d7-4928-a1d7-9ec53f450d71"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = require('jsonwebtoken');\n\n// === CONFIG: hardcoded list of Usersnap survey (project) IDs to ingest ===\nconst SURVEYS = [\n  { project_id: 'REPLACE_PROJECT_ID_1', survey_name: 'Web feedback survey' },\n  {project_id:'REPLACE_PROJECT_ID_2', survey_name:'NPS email survey'},\n  {\n    project_id:'REPLACE_PROJECT_ID_3', survey_name:'In-app feedback survey' \n  }\n  // , { project_id: 'REPLACE_PROJECT_ID_2', survey_name: 'survey 2' }\n];\n\nconst secret = $env.USERSNAP_TOKEN;\nconst kid = $env.USERSNAP_JWT_KID;\nif (!secret || !kid) {\n  throw new Error('Missing env vars: USERSNAP_TOKEN (JWT secret) and/or USERSNAP_JWT_KID (JWT ID)');\n}\n\nconst now = Math.floor(Date.now() / 1000);\nconst token = jwt.sign(\n  { iat: now, exp: now + 3600 },\n  secret,\n  { algorithm: 'HS256', header: { alg: 'HS256', kid: kid, typ: 'JWT' } }\n);\n\nreturn SURVEYS.map(s => ({ json: { project_id: s.project_id, survey_name: s.survey_name, token } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        1072
+      ],
+      "id": "6a3c0e02-2bd6-4f6a-a226-d9c327b049c1",
+      "name": "Usersnap Surveys + JWT"
+    },
+    {
+      "parameters": {
+        "url": "=https://platform.usersnap.com/v0.1/projects/{{ $json.project_id }}/feedbacks",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -112,
+        1072
+      ],
+      "id": "7c06261b-7a53-4c32-a343-8cdd91c3c0c3",
+      "name": "Fetch Usersnap Feedback",
+      "notes": "GET /projects/{id}/feedbacks with Bearer JWT. Latest 20/project, no pagination; dedup is by feedback_id downstream."
+    },
+    {
+      "parameters": {
+        "table": "USERSNAP_FEEDBACK",
+        "columns": "project_id,survey_name,feedback_id,feedback_number,public_link,created_at,updated_at,status,country,city,browser,os,page_url,app_version,rating,feedback_text,questions,category,labels,raw_payload,categorized_at"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        864
+      ],
+      "id": "873eb6fa-d80b-46dc-81b3-38a7928d76e5",
+      "name": "Insert Usersnap Feedback",
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Usersnap -> Snowflake (v2)\n\nMirrors the iOS/Android review branches: bounded fetch + per-item LLM tag + feedback_id dedup.\n\n1. Sign HS256 JWT (kid + secret), emit hardcoded survey list\n2. Fetch **latest 20/project** (no pagination)\n3. Flatten -> one row/feedback; generic `questions` JSON; derive rating + feedback_text; **drop `email`**\n4. Loop: Gemini classifies into one of 11 clusters -> `category`\n5. SELECT DISTINCT feedback_id -> keep only new -> If -> Insert\n\n**Secrets (n8n env):** USERSNAP_TOKEN, USERSNAP_JWT_KID\n**Snowflake cred** targets ANALYTICS / FEEDBACK. **Gemini cred** = Google Gemini(PaLM).\n\nBackfill of last 90 days lives in the separate `Feedback Pipeline - Backfill` workflow.\niOS/Android review pipeline untouched.",
+        "height": 400,
+        "width": 340
+      },
+      "name": "Usersnap Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        1376
+      ],
+      "id": "e462ccd3-3570-4825-b414-8d9b2f79afbb"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten Usersnap feedbacks -> one item per feedback (PII-safe, generic).\n// survey_name is resolved by PROJECT_ID (robust; no pairedItem dependency).\nconst surveys = $('Usersnap Surveys + JWT').all();\nconst byProject = {};\nfor (const s of surveys) {\n  const j = s.json || {};\n  if (j.project_id != null) byProject[String(j.project_id)] = (j.survey_name ?? null);\n}\n\nfunction extractFeedbacks(body) {\n  if (Array.isArray(body)) {\n    let acc = [];\n    for (const el of body) acc = acc.concat(extractFeedbacks(el));\n    return acc;\n  }\n  if (body && typeof body === 'object') {\n    if (Array.isArray(body.feedbacks)) return body.feedbacks;\n    if (body.data) return extractFeedbacks(body.data);\n    if (body.feedback_id) return [body];\n  }\n  return [];\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const list = extractFeedbacks(item.json);\n  for (const fb of list) {\n    const inputs = Array.isArray(fb.ordered_inputs) ? fb.ordered_inputs : [];\n\n    const ratingField = inputs.find(i => String(i.field_type || '').startsWith('rating'));\n    const rating = ratingField ? (ratingField.numeric_value ?? ratingField.value ?? null) : null;\n\n    const feedback_text = inputs\n      .map(i => (i.text_value != null ? String(i.text_value) : ''))\n      .filter(t => t.trim() !== '')\n      .join('\\n');\n\n    const questions = inputs.map(i => ({\n      field_id: i.field_id ?? null,\n      label: i.label ?? null,\n      field_type: i.field_type ?? null,\n      value: i.value ?? null,\n      order: i.order ?? null,\n    }));\n\n    const client = fb.client || {};\n    const customData = fb.custom_data || {};\n\n    // PII: never store email. Scrub it from the retained raw payload too.\n    const scrubbed = { ...fb };\n    delete scrubbed.email;\n\n    const projectId = fb.project_id ?? null;\n    out.push({ json: {\n      project_id: projectId,\n      survey_name: (projectId != null ? (byProject[String(projectId)] ?? null) : null),\n      feedback_id: String(fb.feedback_id ?? fb.id ?? ''),\n      feedback_number: fb.feedback_number ?? null,\n      public_link: fb.public_link ?? null,\n      created_at: fb.created_at || null,\n      updated_at: fb.updated_at || null,\n      status: fb.status_type || fb.status || null,\n      country: client.country_name ?? null,\n      city: client.city_name ?? null,\n      browser: client.browser_full_name ?? null,\n      os: client.browser_os ?? null,\n      page_url: client.url ?? null,\n      app_version: (customData && customData.version) ? customData.version : null,\n      rating,\n      feedback_text: feedback_text || null,\n      questions: JSON.stringify(questions),\n      labels: fb.labels ? JSON.stringify(fb.labels) : null,\n      raw_payload: JSON.stringify(scrubbed),\n    } });\n  }\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        1072
+      ],
+      "id": "01ea3e4a-3225-4fa6-850e-39e38ce7b139",
+      "name": "Flatten Usersnap Feedback"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        336,
+        1072
+      ],
+      "id": "136ac30a-1b84-4a36-8131-60cf9fc10a43",
+      "name": "Loop Over Items - Usersnap"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You classify user feedback for YOUR_PRODUCT into EXACTLY ONE cluster. The feedback text may be in any language.\n\nYou MUST respond with ONLY a valid JSON object. No markdown, no code fences, no extra text:\n{\"category\": \"<one of the exact cluster names below>\"}\n\nAllowed cluster names (copy the exact string, including punctuation):\n- \"Technical Playback & Stability Issues\": playback problems, crashes, error pages, streaming or ad-loading failures, freezing, buffering, black screen.\n- \"Account & Subscription Management Difficulties\": registration/login, password reset, email confirmation, account deletion, failed subscription purchase or payment.\n- \"Advertising Experience Issues\": complaints about ad quantity, length, loudness, or mid-content ad interruptions.\n- \"Content Gaps, Quality & Relevance\": missing content, wrong order/numbering, content removed, misleading availability, weak or irrelevant catalogue.\n- \"Age Verification & Data Privacy Concerns\": age-rating verification problems, parental-control PIN, ID or passport requests, data-privacy objections.\n- \"Poor User Interface & Navigation (UX)\": cluttered/confusing navigation, broken search, watchlist/continue-watching issues, missing subtitle/audio settings, HD/quality gripes tied to the UI.\n- \"Value Perception & Monetization Critique\": paywalls despite \"free\", ads despite a paid tier, feeling forced/coerced to pay or create an account, overpriced.\n- \"General Dissatisfaction & Non-Specific Feedback\": non-specific anger or frustration with no concrete, actionable detail.\n- \"N/A\": uncategorizable - random letters, an email address, a URL, or gibberish, or empty text.\n- \"Positives Feedback\": general satisfaction or praise, even if very brief (e.g. \"good\", \"all good\", \"top\").\n- \"Lacking Customer Support\": difficulty reaching customer support, or support being unhelpful.\n\nRules:\n- Choose the single best-fit cluster.\n- If the text is empty, gibberish, only an email/URL, or otherwise meaningless, return \"N/A\".\n- Short positive answers like \"good\"/\"top\"/\"all good\" -> \"Positives Feedback\".",
+              "role": "model"
+            },
+            {
+              "content": "=Classify this YOUR_PRODUCT feedback into one cluster.\n\nRating (context, may be blank): {{ $json.rating }}\nFeedback text:\n{{ $json.feedback_text }}\n\nReturn only the JSON object."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "name": "Categorize Feedback",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        1072
+      ],
+      "id": "65ee460b-7f0b-4e6a-83a4-792fa6e8aff6",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rkZf2h4vgDxBEXfN",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = new Set([\"Technical Playback & Stability Issues\", \"Account & Subscription Management Difficulties\", \"Advertising Experience Issues\", \"Content Gaps, Quality & Relevance\", \"Age Verification & Data Privacy Concerns\", \"Poor User Interface & Navigation (UX)\", \"Value Perception & Monetization Critique\", \"General Dissatisfaction & Non-Specific Feedback\", \"N/A\", \"Positives Feedback\", \"Lacking Customer Support\"]);\n\nconst aiResponse = $input.first().json;\nconst feedback = $('Loop Over Items - Usersnap').first().json;\n\nlet category = 'N/A';\ntry {\n  const content = aiResponse.content || aiResponse.message?.content;\n  let text = '';\n  if (content && content.parts && content.parts[0] && typeof content.parts[0].text === 'string') {\n    text = content.parts[0].text;\n  } else if (typeof content === 'string') {\n    text = content;\n  }\n  text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const parsed = JSON.parse(text);\n  if (parsed && typeof parsed.category === 'string' && ALLOWED.has(parsed.category.trim())) {\n    category = parsed.category.trim();\n  }\n} catch (e) {\n  category = 'N/A';\n}\n\nreturn [{ json: { ...feedback, category, categorized_at: new Date().toISOString() } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        1152
+      ],
+      "id": "63d743b3-d924-4f06-b1f0-2d926e83f3b9",
+      "name": "Parse Category"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Done branch: enriched feedback items (category attached in the loop).\n// Emit final column order; this node is the holder Check Duplicates reads from.\nreturn $input.all().map(item => {\n  const d = item.json;\n  return { json: {\n    project_id: d.project_id ?? null,\n    survey_name: d.survey_name ?? null,\n    feedback_id: d.feedback_id ?? null,\n    feedback_number: d.feedback_number ?? null,\n    public_link: d.public_link ?? null,\n    created_at: d.created_at ?? null,\n    updated_at: d.updated_at ?? null,\n    status: d.status ?? null,\n    country: d.country ?? null,\n    city: d.city ?? null,\n    browser: d.browser ?? null,\n    os: d.os ?? null,\n    page_url: d.page_url ?? null,\n    app_version: d.app_version ?? null,\n    rating: d.rating ?? null,\n    feedback_text: d.feedback_text ?? null,\n    questions: d.questions ?? null,\n    category: d.category ?? 'N/A',\n    labels: d.labels ?? null,\n    raw_payload: d.raw_payload ?? null,\n    categorized_at: d.categorized_at ?? null,\n  }};\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        880
+      ],
+      "id": "5d340ec8-e71f-4d11-8e23-7d4613079751",
+      "name": "Build Usersnap Row"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT DISTINCT feedback_id AS \"feedback_id\" FROM ANALYTICS.FEEDBACK.USERSNAP_FEEDBACK WHERE project_id IN ({{ $('Usersnap Surveys + JWT').all().map(s => \"'\" + s.json.project_id + \"'\").join(',') }})"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        912,
+        880
+      ],
+      "id": "87275bf4-a77d-47f2-b077-ef6de43efdf6",
+      "name": "Execute a SQL query - Usersnap",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "snowflake": {
+          "id": "oxapCnzYsXNDLhlZ",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Existing feedback_ids already in Snowflake (whole table, no time window).\nconst existing = new Set($input.all().map(item => item.json.feedback_id));\n\n// Enriched rows from the build node.\nconst newRecords = $('Build Usersnap Row').all();\n\n// Keep only rows whose feedback_id is not already stored (also dedups the batch).\nconst toInsert = newRecords.filter(item => !existing.has(item.json.feedback_id));\n\nif (toInsert.length === 0) return [];\nreturn toInsert;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        880
+      ],
+      "id": "1ac467cf-d1fe-4516-8c3c-678835ed4b35",
+      "name": "Check Duplicates - Usersnap",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3a624241-5996-4d0c-9dbf-45ca05991977",
+              "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1360,
+        880
+      ],
+      "id": "1729eb30-8ace-4c71-b297-b65df9060d24",
+      "name": "If - Usersnap"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtMinute": 20
+            }
+          ]
+        }
+      },
+      "name": "Schedule - App Reviews",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        592
+      ],
+      "id": "457c4c5a-fb93-4fab-a876-b7de72140462",
+      "executeOnce": false,
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Analyze Sentiment - OpenAI1": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment3": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Add Unique ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Analyze Sentiment - OpenAI1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [
+          {
+            "node": "Add Unique ID - Android",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Unique ID": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - iOS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Unique ID - Android": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - Android",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - iOS": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - Android": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates-Android",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates-Android": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table - Android": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Android - JWT - Begins": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create JWT": {
+      "main": [
+        [
+          {
+            "node": "Fetch IOS Reviews VIA API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch IOS Reviews VIA API": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in iOS Table": {
+      "main": [
+        [
+          {
+            "node": "Android - JWT - Begins",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in iOS Table",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Android - JWT - Begins",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table - Android",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "Usersnap Surveys + JWT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Usersnap Surveys + JWT": {
+      "main": [
+        [
+          {
+            "node": "Fetch Usersnap Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Usersnap Feedback": {
+      "main": [
+        [
+          {
+            "node": "Flatten Usersnap Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Usersnap Feedback": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "Build Usersnap Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Categorize Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categorize Feedback": {
+      "main": [
+        [
+          {
+            "node": "Parse Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Category": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Usersnap Row": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "If - Usersnap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Usersnap": {
+      "main": [
+        [
+          {
+            "node": "Insert Usersnap Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - App Reviews": {
+      "main": [
+        [
+          {
+            "node": "Create JWT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "fbc495d5-2863-4cc6-a51e-6a92ab327caf",
+  "meta": {
+    "instanceId": "ad94278223ae7b7b51934ee27715d6048507a39638231babc14f248043bfcc98"
+  },
+  "id": "16ce6ebbe379430e",
+  "tags": []
+}

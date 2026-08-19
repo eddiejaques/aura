@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# Production workflow exports stay local.
+#
+# An n8n export carries real identifiers: app ids, API project ids,
+# service-account emails, warehouse database/schema paths, survey ids, and
+# whatever a colleague happened to type into a sticky note. None of that
+# belongs in a public repo.
+#
+# The rule is generic on purpose: nothing at the repo root is shared. Export a
+# workflow from n8n, drop it here, and it is untracked by default. A file only
+# becomes public once you have deliberately sanitised it into generic/.
+#
+# (This pattern is root-only, so generic/*.json is unaffected.)
+# ---------------------------------------------------------------------------
+/*.json
+
+# Anything explicitly marked as unsanitised, wherever it lives
+*.private.json
+*-internal.*
+*-prod.*
+
+# ---------------------------------------------------------------------------
+# Secrets. These should never exist in the working tree at all, but belt and braces:
+# the Apple key is a .p8, the Google service account is a JSON key file.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+*.p8
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
+
+# ---------------------------------------------------------------------------
+# Local noise
+# ---------------------------------------------------------------------------
+node_modules/
+.DS_Store
+*.log
