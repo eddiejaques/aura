@@ -14,7 +14,7 @@ second is what the first turned into after further iteration.
 | Model | GPT-4o-mini + Gemini | Gemini 3.1 Flash Lite |
 | Warehouse | BigQuery | Snowflake |
 | LLM output | sentiment, urgency, **draft reply** | sentiment, urgency, **fixed 11-theme taxonomy** |
-| Config style | `$env` throughout | placeholders + `$env` |
+| Config style | `$env` throughout | `$env` throughout (same variable names) |
 
 The node names are the giveaway: `Parse Sentiment3`, `Add Unique ID`, `Check Duplicates` and
 `Android - JWT - Begins` appear in both. v2 kept the skeleton, swapped the warehouse and the model,
@@ -34,10 +34,13 @@ added a third source, and replaced free-form categories with a controlled vocabu
    ├─ feedback-pipeline-daily.json          40 nodes: iOS + Android + survey, on schedules
    ├─ feedback-pipeline-backfill.json       35 nodes: manual history load
    ├─ schema.sql                            the two warehouse tables
+   ├─ .env.example                          every environment variable, aura-style
+   ├─ PROMPT.md                             instructions for generating a pipeline like this
    └─ ADAPT.md                              how to point it at your own product
 ```
 
 **Want to use v2?** Start with [`generic/ADAPT.md`](generic/ADAPT.md).
+**Want to build your own version of it?** Use [`generic/PROMPT.md`](generic/PROMPT.md).
 **Want the node-by-node detail of v1?** Read [`aura/README.md`](aura/README.md).
 **Want to know why any of it looks like this?** Read [the blog post](blog/learning-n8n-agentic-workflows.md).
 
@@ -97,8 +100,8 @@ v1 has the same quirk; it's step 12 of the Apple pipeline in `aura/README.md`.
 
 **Before running v2 for real, read [`ADAPT.md` §10](generic/ADAPT.md).** Three things in it are the
 first-draft version: one LLM call per item rather than ~50 per call, a dedup that no database
-constraint enforces (and which is not concurrency-safe), and SQL built by string concatenation that
-is only safe while its input stays hardcoded.
+constraint enforces (and which is not concurrency-safe), and SQL built by string concatenation —
+guarded by UUID validation, but query parameters would be the real fix.
 
 ## Three properties worth preserving if you change any of this
 
@@ -117,8 +120,10 @@ matching `/*.json` at the repo root, so a freshly exported workflow is untracked
 becomes shareable once it has been deliberately sanitised into `generic/`.
 
 The `generic/` workflows are structural copies of the live ones: same nodes, same connections, same
-logic, with product names, app ids, warehouse paths and survey ids replaced by placeholders. They
-were checked to contain none of the original identifiers, the 11 category names were verified
+logic, with app ids, package names, account emails, warehouse paths and survey ids all read from
+`$env` (see `generic/.env.example`). Only the product name inside the six LLM prompts is a literal,
+because those fields cannot be n8n expressions without breaking on their own JSON braces. They were
+checked to contain none of the original identifiers, the 11 category names were verified
 byte-identical between every prompt and every validation list, and credential vault ids and
 `meta.instanceId` were nulled out.
 

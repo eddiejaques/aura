@@ -16,6 +16,8 @@ runs until you fill those in.
 | `feedback-pipeline-daily.json` | 40 nodes, two schedules: app-store reviews (iOS then Android, chained) and survey feedback |
 | `feedback-pipeline-backfill.json` | 35 nodes, manual trigger, loads a history window for survey feedback |
 | `schema.sql` | The two tables the workflows write into |
+| `.env.example` | Every environment variable, in aura's naming convention |
+| `PROMPT.md` | Instructions for generating a pipeline like this for a different source |
 
 ---
 

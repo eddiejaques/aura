@@ -332,9 +332,11 @@ And the technical debt I can already see in my own canvas:
   BigQuery, `PRIMARY KEY` and `UNIQUE` are informational and unenforced** — you can declare one and
   still insert the duplicate. I'd have bet money the other way.
 - **Stop concatenating strings into SQL.** The survey dedup query builds its `IN (...)` list by
-  gluing quoted ids together. It's safe today because that list is hardcoded and mine. It stops
-  being safe the first time someone drives it from an API or a table — which is precisely the
-  improvement I keep recommending. Parameterise it before making it dynamic, not after.
+  gluing quoted ids together. That was safe while the list was hardcoded and mine. Then I moved the
+  list into an environment variable — which is the improvement I'd been recommending, and which is
+  exactly what makes concatenation start to matter. So the config node now validates every id as a
+  UUID before it can reach the query. That's a guard, not a fix; query parameters are the fix.
+  Worth noticing that tidying one thing quietly loaded the gun on another.
 - **Add error branches.** Today one malformed item can end a run. Each item should be able to fail
   on its own and get retried. This matters more once items are batched: a failed call now loses
   fifty of them instead of one.
@@ -346,13 +348,44 @@ And the technical debt I can already see in my own canvas:
 - **Cut the string between iOS and Android.** Two triggers, two independent branches. Five minutes
   of work to remove a failure mode I'd otherwise find out about the hard way.
 
+## The thing I'd hand to my past self
+
+Somewhere around the third branch I realised I wasn't designing any more, I was copying. Same nine
+steps, different API on the front, different table on the back. So I wrote the shape down as a
+prompt — one you can hand to a model along with "the source is Zendesk, the warehouse is Postgres,
+here are my themes" and get a workflow JSON back.
+
+What makes it useful isn't the outline. It's the list of constraints, and every one of them is a
+scar:
+
+- The loop node's output 0 is the *finished* one, not the first one.
+- The theme names in the prompt and the theme names in the validation list must match byte for
+  byte, or every row silently becomes `N/A`.
+- A field only evaluates `{{ ... }}` if the string starts with `=`. Forget the `=` in a SQL query
+  and it doesn't error — it just quietly doesn't substitute.
+- Don't turn the classification prompt into an expression, because it contains JSON braces and n8n
+  will try to parse them as templating.
+- Hash the author's name into the id, then throw the name away.
+- Run it twice. Zero new rows the second time is the only proof dedup works.
+
+A model writes the eighty percent of that file which is boilerplate perfectly well. What it can't
+know is which twenty percent will bite you at 2am, because that knowledge only exists in people who
+have already been bitten. That's the part worth writing down, and it's the part that stays valuable
+as models get better.
+
+It's in the repo as `PROMPT.md`.
+
 ## Take it
 
-Sanitised copies of both workflows are in [`generic/`](../generic/), with a `schema.sql` and an
-`ADAPT.md` that walks through the placeholders, the credentials, and how to swap Snowflake for
-BigQuery or Postgres.
+Sanitised copies of both workflows are in [`generic/`](../generic/), with a `schema.sql`, an
+`.env.example`, a `PROMPT.md` for generating your own, and an `ADAPT.md` that walks through the
+credentials, the environment variables, and how to swap Snowflake for BigQuery or Postgres.
 
-The most important section of that guide is the one about choosing your own categories. Everything
+The repo also has the earlier version of this pipeline, `aura/` — BigQuery, OpenAI, drafting replies
+instead of sorting themes. Same node skeleton. It's a decent illustration that none of this arrives
+fully formed; you build one, live with it, and the second one is the one you'd defend.
+
+The most important section of the guide is the one about choosing your own categories. Everything
 else is plumbing. The list of buckets is the product.
 
 If you take one thing from this: the reason this worked isn't that AI is clever. It's that AI is
