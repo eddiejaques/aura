@@ -35,7 +35,7 @@
       "id": "09429705-cd68-4bc1-bb88-9ea6aeb9c3d0",
       "credentials": {
         "googlePalmApi": {
-          "id": "rkZf2h4vgDxBEXfN",
+          "id": null,
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -126,7 +126,7 @@
       "name": "Message a model",
       "credentials": {
         "googlePalmApi": {
-          "id": "rkZf2h4vgDxBEXfN",
+          "id": null,
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -284,7 +284,7 @@
       "name": "Insert rows in a table - Android",
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -305,7 +305,7 @@
       "alwaysOutputData": true,
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -340,7 +340,7 @@
       "alwaysOutputData": true,
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -375,7 +375,7 @@
       "name": "Android - JWT - Begins",
       "credentials": {
         "jwtAuth": {
-          "id": "KvLxwjUywatV7u3h",
+          "id": null,
           "name": "JWT Auth account"
         }
       }
@@ -451,7 +451,7 @@
       "name": "Insert rows in iOS Table",
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -537,7 +537,7 @@
       "name": "Execute a SQL query",
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -624,7 +624,7 @@
       "name": "Insert Usersnap Feedback",
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -704,7 +704,7 @@
       "id": "65ee460b-7f0b-4e6a-83a4-792fa6e8aff6",
       "credentials": {
         "googlePalmApi": {
-          "id": "rkZf2h4vgDxBEXfN",
+          "id": null,
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -752,7 +752,7 @@
       "executeOnce": true,
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -1252,9 +1252,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "versionId": "fbc495d5-2863-4cc6-a51e-6a92ab327caf",
-  "meta": {
-    "instanceId": "ad94278223ae7b7b51934ee27715d6048507a39638231babc14f248043bfcc98"
-  },
+  "meta": {},
   "id": "16ce6ebbe379430e",
   "tags": []
 }

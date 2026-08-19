@@ -1,7 +1,24 @@
-# User feedback → LLM classification → warehouse
+# Aura — user feedback pipelines in n8n
 
 n8n workflows that collect user feedback from app stores and survey tools, have an LLM sort each
-item into a fixed list of themes, and land the result in Snowflake as queryable rows.
+item into a fixed set of themes, and land the result in a warehouse as queryable rows.
+
+There are two generations here. They solve the same problem and share most of their DNA — the
+second is what the first turned into after further iteration.
+
+| | **v1 — `aura/`** | **v2 — `generic/`** |
+|---|---|---|
+| Workflow | `App Reviews - Fetch & Analyze - DND5` | `…- DND12` |
+| Nodes | 30 | 40 + 35 (backfill) |
+| Sources | App Store, Google Play | App Store, Google Play, **survey feedback** |
+| Model | GPT-4o-mini + Gemini | Gemini 3.1 Flash Lite |
+| Warehouse | BigQuery | Snowflake |
+| LLM output | sentiment, urgency, **draft reply** | sentiment, urgency, **fixed 11-theme taxonomy** |
+| Config style | `$env` throughout | placeholders + `$env` |
+
+The node names are the giveaway: `Parse Sentiment3`, `Add Unique ID`, `Check Duplicates` and
+`Android - JWT - Begins` appear in both. v2 kept the skeleton, swapped the warehouse and the model,
+added a third source, and replaced free-form categories with a controlled vocabulary.
 
 ## What's here
 
@@ -9,17 +26,20 @@ item into a fixed list of themes, and land the result in Snowflake as queryable 
 .
 ├─ blog/
 │  └─ learning-n8n-agentic-workflows.md   the story: why this exists and how it was built
-├─ generic/                               shareable, product-neutral copies
-│  ├─ feedback-pipeline-daily.json          40 nodes: iOS + Android + survey, on schedules
-│  ├─ feedback-pipeline-backfill.json       35 nodes: manual history load
-│  ├─ schema.sql                            the two warehouse tables
-│  └─ ADAPT.md                              how to point it at your own product
-├─ App Reviews - Fetch & Analyze - DND12.json   production workflow (Joyn)
-└─ Usersnap Backfill - 90d V2.json              production backfill (Joyn)
+├─ aura/                                  v1 — BigQuery + OpenAI, draft replies
+│  ├─ aura.json
+│  ├─ README.md                             node-by-node breakdown and setup
+│  └─ .env.example
+└─ generic/                               v2 — Snowflake + Gemini, themed classification
+   ├─ feedback-pipeline-daily.json          40 nodes: iOS + Android + survey, on schedules
+   ├─ feedback-pipeline-backfill.json       35 nodes: manual history load
+   ├─ schema.sql                            the two warehouse tables
+   └─ ADAPT.md                              how to point it at your own product
 ```
 
-**Want to use this?** Start with [`generic/ADAPT.md`](generic/ADAPT.md).
-**Want to know why it looks like this?** Read [the blog post](blog/learning-n8n-agentic-workflows.md).
+**Want to use v2?** Start with [`generic/ADAPT.md`](generic/ADAPT.md).
+**Want the node-by-node detail of v1?** Read [`aura/README.md`](aura/README.md).
+**Want to know why any of it looks like this?** Read [the blog post](blog/learning-n8n-agentic-workflows.md).
 
 ## The shape
 
@@ -41,7 +61,7 @@ flowchart LR
         P1 --> P2 --> P3 --> P4
     end
 
-    W[("Snowflake<br/>APP_STORE_REVIEWS<br/>USERSNAP_FEEDBACK")]
+    W[("warehouse<br/>APP_STORE_REVIEWS<br/>USERSNAP_FEEDBACK")]
 
     subgraph OUT["Consumers"]
         direction TB
@@ -71,27 +91,42 @@ Schedule → sign JWT → fetch → flatten to one item per feedback
   → SELECT existing ids → keep only new → If > 0 → insert
 ```
 
-Note that the canvas has **two triggers, not three** — the Android branch is chained onto the end
+Note that the v2 canvas has **two triggers, not three** — the Android branch is chained onto the end
 of the iOS one. See [`generic/ADAPT.md` §2](generic/ADAPT.md) before you delete or rewire a branch.
+v1 has the same quirk; it's step 12 of the Apple pipeline in `aura/README.md`.
 
-**Before running this for real, read [`ADAPT.md` §10](generic/ADAPT.md).** Three things in here are
-the first-draft version: one LLM call per item rather than ~50 per call, a dedup that no database
+**Before running v2 for real, read [`ADAPT.md` §10](generic/ADAPT.md).** Three things in it are the
+first-draft version: one LLM call per item rather than ~50 per call, a dedup that no database
 constraint enforces (and which is not concurrency-safe), and SQL built by string concatenation that
 is only safe while its input stays hardcoded.
 
-Three properties worth preserving if you change it:
+## Three properties worth preserving if you change any of this
 
 - **The LLM's answer is validated in code** against the exact list of category names. Anything it
-  invents becomes `N/A` rather than silently entering the data.
+  invents becomes `N/A` rather than silently entering the data. In v2 that list appears in both the
+  prompt and a JS `Set`, and they must match byte for byte.
 - **Every run is safe to re-run.** Dedup happens before insert, on a stable id.
 - **No personal data is stored.** Reviewer names are hashed into the id and discarded; email
   addresses are deleted from survey items and scrubbed from the retained raw payload.
 
-## Production vs generic
+## What is and isn't in this repo
 
-The two files in the root are the live Joyn workflows. The `generic/` copies are the same
-structure with product names, app ids, warehouse paths and survey ids replaced by placeholders —
-verified to contain none of the original identifiers, and with the 11 category names checked
-byte-identical between every prompt and every validation list.
+Everything published here is sanitised. Raw n8n exports are **git-ignored** — an export carries real
+app ids, service-account emails, warehouse paths and survey ids. `.gitignore` excludes everything
+matching `/*.json` at the repo root, so a freshly exported workflow is untracked by default and only
+becomes shareable once it has been deliberately sanitised into `generic/`.
 
-Secrets are never in these files. All credentials come from n8n credentials or `$env`.
+The `generic/` workflows are structural copies of the live ones: same nodes, same connections, same
+logic, with product names, app ids, warehouse paths and survey ids replaced by placeholders. They
+were checked to contain none of the original identifiers, the 11 category names were verified
+byte-identical between every prompt and every validation list, and credential vault ids and
+`meta.instanceId` were nulled out.
+
+No secrets are in any of these files. All credentials come from n8n credentials or `$env`.
+
+> **Not verified by execution.** The `generic/` workflows were validated structurally — valid JSON,
+> node and connection graphs identical to the originals — but have not been re-imported into a live
+> n8n instance since sanitising. Expect to re-link credentials on import.
+>
+> `aura/aura.json` still carries its source instance's credential vault ids and BigQuery resource
+> locators, as its own README explains. Re-link and re-pick those after importing.

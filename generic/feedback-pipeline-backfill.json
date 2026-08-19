@@ -99,7 +99,7 @@
       "id": "3187594d-6698-4040-81f1-97dba49306b5",
       "credentials": {
         "googlePalmApi": {
-          "id": "rkZf2h4vgDxBEXfN",
+          "id": null,
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -147,7 +147,7 @@
       "executeOnce": true,
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -214,7 +214,7 @@
       "name": "Insert Usersnap Feedback",
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -320,7 +320,7 @@
       "id": "3fabfe13-5db4-4d10-912c-91c91883c973",
       "credentials": {
         "googlePalmApi": {
-          "id": "rkZf2h4vgDxBEXfN",
+          "id": null,
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -368,7 +368,7 @@
       "executeOnce": true,
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -435,7 +435,7 @@
       "name": "Insert Usersnap Feedback1",
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -526,7 +526,7 @@
       "id": "8c606aa5-2d88-4cde-b391-2bf2d0e14aa0",
       "credentials": {
         "googlePalmApi": {
-          "id": "rkZf2h4vgDxBEXfN",
+          "id": null,
           "name": "Google Gemini(PaLM) Api account"
         }
       }
@@ -574,7 +574,7 @@
       "executeOnce": true,
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -641,7 +641,7 @@
       "name": "Insert Usersnap Feedback2",
       "credentials": {
         "snowflake": {
-          "id": "oxapCnzYsXNDLhlZ",
+          "id": null,
           "name": "Snowflake account"
         }
       }
@@ -1028,9 +1028,7 @@
     "availableInMCP": false
   },
   "versionId": "e8a8d7b7-0135-458d-a53e-7f0cb283b0b6",
-  "meta": {
-    "instanceId": "ad94278223ae7b7b51934ee27715d6048507a39638231babc14f248043bfcc98"
-  },
+  "meta": {},
   "id": "babbc3a09ece4af4",
   "tags": []
 }
